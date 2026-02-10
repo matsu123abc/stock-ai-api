@@ -27,9 +27,10 @@ jobs:
       - name: Zip project
         run: zip -r release.zip .
 
-      - name: Deploy to Azure Functions (ZipDeploy)
-        uses: azure/webapps-deploy@v2
+      - name: Deploy to Azure Functions (Linux Consumption)
+        uses: Azure/functions-action@v1
         with:
-          app-name: func-stock-ai-fueugvfnfyf5f5e3   # ← ここが重要
-          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          app-name: func-stock-ai-fueugvfnfyf5f5e3
           package: release.zip
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          scm-do-build-during-deployment: true
