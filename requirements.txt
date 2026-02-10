@@ -1,0 +1,10 @@
+azure-functions
+pandas
+numpy
+yfinance
+requests
+beautifulsoup4
+lxml
+python-dateutil
+pytz
+azure-storage-blob
