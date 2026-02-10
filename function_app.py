@@ -1,81 +1,69 @@
 import azure.functions as func
+import logging
 import json
+import pandas as pd
+import numpy as np
+import yfinance as yf
+from datetime import datetime, timedelta
+from azure.storage.blob import BlobServiceClient
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+app = func.FunctionApp()
 
+# ============================================================
+# 1. Screening API
+# ============================================================
+@app.function_name(name="screening")
+@app.route(route="screening", methods=["GET"], auth_level="anonymous")
+def screening(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("screening start")
 
-# ---------------------------------------------------------
-# 1. run_screening（スクリーニング実行）
-# ---------------------------------------------------------
-@app.route(route="run_screening", methods=["POST"])
-def run_screening(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        # TODO: shared/screening_logic.py を呼び出す
-        result = {"status": "ok", "message": "screening executed"}
-        return func.HttpResponse(json.dumps(result), mimetype="application/json")
-    except Exception as e:
-        return func.HttpResponse(
-            json.dumps({"status": "error", "message": str(e)}),
-            status_code=500,
-            mimetype="application/json"
-        )
+    # ★ ここに screening のロジックを移植
+    # 例：
+    # tickers = ["7203.T", "6758.T"]
+    # df = fetch_price_data(tickers)
+    # result = run_screening(df)
 
-
-# ---------------------------------------------------------
-# 2. run_monitoring（監視実行）
-# ---------------------------------------------------------
-@app.route(route="run_monitoring", methods=["POST"])
-def run_monitoring(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        # TODO: shared/monitoring_logic.py を呼び出す
-        result = {"status": "ok", "message": "monitoring executed"}
-        return func.HttpResponse(json.dumps(result), mimetype="application/json")
-    except Exception as e:
-        return func.HttpResponse(
-            json.dumps({"status": "error", "message": str(e)}),
-            status_code=500,
-            mimetype="application/json"
-        )
+    result = {"status": "ok", "message": "screening done"}
+    return func.HttpResponse(json.dumps(result), mimetype="application/json")
 
 
-# ---------------------------------------------------------
-# 3. get_screening_latest（最新スクリーニング結果を取得）
-# ---------------------------------------------------------
-@app.route(route="get_screening_latest", methods=["GET"])
-def get_screening_latest(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        # TODO: shared/storage_utils.py から最新 HTML/JSON を取得
-        result = {"status": "ok", "data": "latest screening data"}
-        return func.HttpResponse(json.dumps(result), mimetype="application/json")
-    except Exception as e:
-        return func.HttpResponse(
-            json.dumps({"status": "error", "message": str(e)}),
-            status_code=500,
-            mimetype="application/json"
-        )
+# ============================================================
+# 2. Monitoring API
+# ============================================================
+@app.function_name(name="monitoring")
+@app.route(route="monitoring", methods=["GET"], auth_level="anonymous")
+def monitoring(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("monitoring start")
+
+    # ★ ここに monitoring のロジックを移植
+
+    result = {"status": "ok", "message": "monitoring done"}
+    return func.HttpResponse(json.dumps(result), mimetype="application/json")
 
 
-# ---------------------------------------------------------
-# 4. get_symbol_history（銘柄の過去データを取得）
-# ---------------------------------------------------------
-@app.route(route="get_symbol_history", methods=["GET"])
-def get_symbol_history(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        symbol = req.params.get("symbol")
-        if not symbol:
-            return func.HttpResponse(
-                json.dumps({"status": "error", "message": "symbol is required"}),
-                status_code=400,
-                mimetype="application/json"
-            )
+# ============================================================
+# 3. 指標計算（例：反転強度）
+# ============================================================
+def calc_reversal_strength(df: pd.DataFrame) -> float:
+    # ★ ここに indicators.py のロジックを移植
+    return 0.0
 
-        # TODO: shared/yfinance_utils.py を呼び出す
-        result = {"status": "ok", "symbol": symbol, "data": "history data"}
-        return func.HttpResponse(json.dumps(result), mimetype="application/json")
 
-    except Exception as e:
-        return func.HttpResponse(
-            json.dumps({"status": "error", "message": str(e)}),
-            status_code=500,
-            mimetype="application/json"
-        )
+# ============================================================
+# 4. 株価データ取得（共通関数）
+# ============================================================
+def fetch_price_data(tickers):
+    data = yf.download(tickers, period="1y")
+    return data
+
+
+# ============================================================
+# 5. Blob 保存（共通関数）
+# ============================================================
+def save_to_blob(content: str, filename: str):
+    conn_str = "<後で環境変数に移動>"
+    container = "results"
+
+    blob_service = BlobServiceClient.from_connection_string(conn_str)
+    blob_client = blob_service.get_blob_client(container=container, blob=filename)
+    blob_client.upload_blob(content, overwrite=True)
