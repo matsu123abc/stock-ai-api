@@ -30,6 +30,6 @@ jobs:
       - name: Deploy to Azure Functions (ZipDeploy)
         uses: azure/webapps-deploy@v2
         with:
-          app-name: func-stock-ai
+          app-name: func-stock-ai-fueugvfnfyf5f5e3   # ← ここが重要
           publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
           package: release.zip
