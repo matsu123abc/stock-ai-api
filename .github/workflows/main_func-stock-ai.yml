@@ -41,4 +41,4 @@ jobs:
 
       - name: Deploy to Azure Function App
         run: |
-          func azure functionapp publish stock-ai-api --python
+          func azure functionapp publish func-stock-ai --python
