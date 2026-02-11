@@ -293,14 +293,29 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
             <meta charset="utf-8">
             <title>Screening Result</title>
             <style>
-                table { border-collapse: collapse; width: 100%; }
-                th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 12px; }
+                .table-wrapper {
+                    overflow-x: auto;
+                    width: 100%;
+                }
+                table {
+                    border-collapse: collapse;
+                    min-width: 2000px;   /* ← 画面幅より広くする */
+                }
+                th, td {
+                    border: 1px solid #ccc;
+                    padding: 4px 6px;
+                    font-size: 12px;
+                }
                 th { background: #f0f0f0; }
-                td.comment { max-width: 2400px; }
+                td.comment { 
+                    white-space: normal;   /* 折り返しを許可 */
+                }
             </style>
         </head>
         <body>
         <h2>Screening Result</h2>
+
+        <div class="table-wrapper">
         <table>
             <tr>
                 <th>symbol</th>
@@ -358,6 +373,8 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
 
         footer = """
         </table>
+        </div>
+
         </body>
         </html>
         """
@@ -368,7 +385,6 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
             html,
             mimetype="text/html"
         )
-
 
     except Exception as e:
         return func.HttpResponse(
