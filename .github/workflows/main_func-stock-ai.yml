@@ -27,12 +27,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Prepare ZIP package
+      # ZIP を安全に作成する（package フォルダを作らない）
+      - name: Create ZIP package
         run: |
-          mkdir package
-          cp -r * package/
-          cd package
-          zip -r ../function.zip .
+          zip -r function.zip . -x "*.git*" -x "function.zip"
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
