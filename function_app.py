@@ -33,10 +33,60 @@ def calc_atr(df, window=14):
     atr = tr.rolling(window).mean()
     return atr
 
+# --- スコア計算（Gradio版を忠実に移植） ---
+def calc_score(drop_rate, reversal_rate, reversal_strength,
+               ema20, ema50, slope_ema20,
+               volume_ratio, atr):
+
+    score = 0
+
+    # ① 反転の質
+    score += int(reversal_rate / 4) * 2
+
+    if drop_rate <= -10:
+        score += 3
+    if drop_rate <= -15:
+        score += 5
+
+    if reversal_strength >= 0.2:
+        score += 3
+    if reversal_strength >= 0.4:
+        score += 5
+    if reversal_strength >= 0.6:
+        score += 7
+    if reversal_strength >= 0.8:
+        score += 9
+
+    # ② トレンド
+    if ema20 > ema50:
+        score += 5
+
+    if slope_ema20 > 0:
+        score += 2
+    if slope_ema20 > 0.5:
+        score += 4
+
+    # ③ 出来高
+    if volume_ratio >= 2:
+        score += 5
+    elif volume_ratio >= 1:
+        score += 3
+
+    # ④ ATR（リスク）
+    if atr < 20:
+        score += 5
+    elif atr < 30:
+        score += 3
+    elif atr < 40:
+        score += 1
+
+    return score
+
+
 @app.function_name(name="screening")
 @app.route(route="screening", methods=["GET"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening step3 start")
+    logging.info("screening step4 start")
 
     symbol = req.params.get("symbol")
     if not symbol:
@@ -78,6 +128,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         df["EMA20"] = ema(df["Close"], 20)
         df["EMA50"] = ema(df["Close"], 50)
         df["ATR"] = calc_atr(df)
+        df["vol_ma20"] = df["Volume"].rolling(window=20).mean()
 
         latest = df.iloc[-1]
 
@@ -85,6 +136,13 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         ema20 = safe_float(latest["EMA20"])
         ema50 = safe_float(latest["EMA50"])
         atr = safe_float(latest["ATR"])
+
+        # --- slope_ema20 ---
+        slope_ema20 = ema20 - safe_float(df["EMA20"].iloc[-5])
+
+        # --- volume_ratio ---
+        vol_ma20 = safe_float(latest["vol_ma20"])
+        volume_ratio = latest["Volume"] / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
 
         # --- 反転強度 ---
         recent = df.tail(120)
@@ -100,7 +158,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         else:
             reversal_strength = None
 
-        # --- screening 条件 ---
+        # --- 条件判定 ---
         cond_drop = drop_rate is not None and drop_rate <= -10
         cond_rev = reversal_rate is not None and reversal_rate >= 4
         cond_strength = reversal_strength is not None and reversal_strength < 1
@@ -117,6 +175,18 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             cond_mc
         ])
 
+        # --- スコア ---
+        score = calc_score(
+            drop_rate,
+            reversal_rate,
+            reversal_strength,
+            ema20,
+            ema50,
+            slope_ema20,
+            volume_ratio,
+            atr
+        )
+
         result = {
             "symbol": symbol,
             "close": close_price,
@@ -127,6 +197,9 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             "reversal_rate": reversal_rate,
             "reversal_strength": reversal_strength,
             "market_cap": market_cap,
+            "slope_ema20": slope_ema20,
+            "volume_ratio": volume_ratio,
+            "score": score,
             "conditions": {
                 "drop_ok": cond_drop,
                 "reversal_ok": cond_rev,
