@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -17,16 +17,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -34,14 +24,14 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # ★ Oryx build（Flex Consumption の正しい方法）
-      - name: Build with Oryx
+      # ZIP を作成（Oryx は Azure 側で実行される）
+      - name: Create ZIP package
         run: |
-          oryx build . --platform python --platform-version 3.11 -o output
+          zip -r function.zip . -x "*.git*" -x "function.zip"
 
-      # ★ WebApps Deploy（ZIP Deploy ではない）
+      # Flex Consumption 用の正しいデプロイ方法
       - name: Deploy to Azure Function App
         uses: azure/webapps-deploy@v2
         with:
           app-name: func-stock-ai
-          package: output
+          package: function.zip
