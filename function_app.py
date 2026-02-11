@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+import io
 
 import azure.functions as func
 import yfinance as yf
@@ -110,28 +111,22 @@ def gpt_score(symbol, name, price, market_cap,
 以下の銘柄について、短期的な期待度を 0〜100 点でスコアリングし、
 さらに「買い」「様子見」「避ける」のいずれかで売買判断を行ってください。
 
-【銘柄情報】
 銘柄コード: {symbol}
 株価: {price}
 時価総額(億円): {market_cap}
 
-【反転パターン】
 下落率: {drop_rate:.2f}%
 反転率: {reversal_rate:.2f}%
 反転強度: {reversal_strength:.2f}
 
-【トレンド】
 EMA20: {ema20}
 EMA50: {ema50}
-EMA20とEMA50の位置関係: {"上" if ema20 > ema50 else "下"}
 EMA20の傾き: {slope_ema20:.2f}
 
-【出来高】
 出来高: {volume}
 出来高20日平均: {vol_ma20}
 出来高急増率: {volume_ratio:.2f}
 
-【リスク】
 ATR(14): {atr}
 
 返答は JSON のみ。
@@ -167,28 +162,31 @@ JSON形式:
 
 
 # =========================
-# メイン関数（複数銘柄対応）
+# メイン関数（CSV アップロード対応）
 # =========================
 
-@app.function_name(name="screening")
-@app.route(route="screening", methods=["POST"], auth_level="anonymous")
-def screening(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening step6 start")
+@app.function_name(name="screening_csv")
+@app.route(route="screening_csv", methods=["POST"], auth_level="anonymous")
+def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("screening step7 start")
 
     try:
-        body = req.get_json()
-        symbols = body.get("symbols", [])
+        # --- CSV を Body から読み込む ---
+        csv_text = req.get_body().decode("utf-8")
+        df_csv = pd.read_csv(io.StringIO(csv_text))
 
-        if not symbols:
+        if "コード" not in df_csv.columns:
             return func.HttpResponse(
-                json.dumps({"error": "symbols が指定されていません"}),
+                json.dumps({"error": "CSV に 'コード' 列がありません"}),
                 mimetype="application/json",
                 status_code=400
             )
 
         results = []
 
-        for symbol in symbols:
+        for code in df_csv["コード"]:
+            symbol = f"{code}.T"
+
             try:
                 df = yf.download(symbol, period="90d", interval="1h")
                 if df is None or df.empty:
