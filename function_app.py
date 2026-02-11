@@ -5,15 +5,11 @@ import yfinance as yf
 
 app = func.FunctionApp()
 
-# ============================================================
-# screening（最小版）
-# ============================================================
 @app.function_name(name="screening")
 @app.route(route="screening", methods=["GET"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening minimal version start")
 
-    # クエリから symbol を取得
     symbol = req.params.get("symbol")
     if not symbol:
         return func.HttpResponse(
@@ -22,7 +18,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400
         )
 
-    # yfinance で株価取得（最小版）
     try:
         df = yf.download(symbol, period="5d", interval="1h")
         if df is None or df.empty:
@@ -33,12 +28,19 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         latest = df.iloc[-1]
+
+        # --- Azure Functions で安全に float に変換 ---
+        def safe_float(x):
+            if hasattr(x, "iloc"):
+                return float(x.iloc[0])
+            return float(x)
+
         result = {
             "symbol": symbol,
-            "close": float(latest["Close"]),
-            "high": float(latest["High"]),
-            "low": float(latest["Low"]),
-            "volume": int(latest["Volume"])
+            "close": safe_float(latest["Close"]),
+            "high": safe_float(latest["High"]),
+            "low": safe_float(latest["Low"]),
+            "volume": int(safe_float(latest["Volume"]))
         }
 
         return func.HttpResponse(
