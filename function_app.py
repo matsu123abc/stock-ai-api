@@ -1,12 +1,18 @@
-import azure.functions as func
+import os
 import logging
 import json
+
+import azure.functions as func
 import yfinance as yf
 import pandas as pd
+from openai import AzureOpenAI
 
 app = func.FunctionApp()
 
-# --- 安全な float 変換 ---
+# =========================
+# 共通ユーティリティ
+# =========================
+
 def safe_float(x):
     try:
         if hasattr(x, "iloc"):
@@ -15,11 +21,9 @@ def safe_float(x):
     except Exception:
         return None
 
-# --- EMA 計算 ---
 def ema(series, span):
     return series.ewm(span=span).mean()
 
-# --- ATR 計算 ---
 def calc_atr(df, window=14):
     high = df["High"]
     low = df["Low"]
@@ -33,12 +37,10 @@ def calc_atr(df, window=14):
     atr = tr.rolling(window).mean()
     return atr
 
-# --- スコア計算（Series 完全排除版） ---
 def calc_score(drop_rate, reversal_rate, reversal_strength,
                ema20, ema50, slope_ema20,
                volume_ratio, atr):
 
-    # すべて float に強制変換
     drop_rate = float(drop_rate)
     reversal_rate = float(reversal_rate)
     reversal_strength = float(reversal_strength)
@@ -92,11 +94,113 @@ def calc_score(drop_rate, reversal_rate, reversal_strength,
 
     return score
 
+def gpt_score(symbol, name, price, market_cap,
+              drop_rate, reversal_rate, reversal_strength,
+              ema20, ema50, slope_ema20,
+              atr, volume, vol_ma20, volume_ratio):
+
+    client = AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    )
+
+    prompt = f"""
+あなたは短期トレードの専門家です。
+以下の銘柄について、短期的な期待度を 0〜100 点でスコアリングし、
+さらに「買い」「様子見」「避ける」のいずれかで売買判断を行ってください。
+
+【銘柄情報】
+銘柄コード: {symbol}
+銘柄名: {name}
+株価: {price}
+時価総額(億円): {market_cap}
+
+【反転パターン（最重要）】
+高値→安値の下落率: {drop_rate:.2f}%
+安値→現在の反転率: {reversal_rate:.2f}%
+反転強度（反転率 ÷ 下落率の絶対値）: {reversal_strength:.2f}
+
+【トレンド】
+EMA20: {ema20}
+EMA50: {ema50}
+EMA20とEMA50の位置関係: {"上" if ema20 > ema50 else "下"}
+EMA20の傾き（直近5本の変化量）: {slope_ema20:.2f}
+
+【出来高】
+出来高: {volume}
+出来高20日平均: {vol_ma20}
+出来高急増率: {volume_ratio:.2f}
+
+【リスク】
+ATR(14): {atr}
+
+【評価方針】
+あなたは短期トレードの専門家です。
+この銘柄が「高値→安値→反転」という明確な反転パターンを形成し、
+その後の中盤トレンドに移行しているかを中心に評価してください。
+
+【特に重視するポイント】
+- 下落率が十分に深いか（反転の前提条件）
+- 反転率が明確で、反転強度が高いか
+- ただし、反転強度が 1 を大きく超えた「伸び切り局面」は過熱とみなす
+- EMA20 が EMA50 の上で安定して推移しているか
+- 反転後の出来高が増えているか
+- ATR が過度に高くなく、リスクが管理しやすいか
+- 市場心理が買い優勢に傾いているか
+
+【スコアリング方針】
+- 反転の質（反転率・下落率・反転強度）を最重要視する
+- 特に「反転強度が 1 未満〜1 付近の銘柄」を高く評価する
+- 反転強度が 1 を大きく超える銘柄は、すでに伸び切った局面として慎重に扱う
+- EMA20と出来高は補助的に評価する
+- ATRはリスク調整として扱う
+
+【コメント生成ルール】
+- 200〜300文字の読み応えある分析コメントを書くこと
+- 箇条書きは禁止
+- 「反転の質」と「反転強度が 1 未満であること」の意味合いを中心に分析すること
+- 同じ表現を繰り返さず、銘柄ごとに異なる観点で書くこと
+
+返答は JSON のみ。前後に文章を付けないこと。
+
+JSON形式:
+{{
+  "score": 数値,
+  "judgement": "買い / 様子見 / 避ける",
+  "comment": "200〜300文字のコメント"
+}}
+"""
+
+    try:
+        res = client.chat.completions.create(
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+
+        raw = res.choices[0].message.content.strip()
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        json_text = raw[json_start:json_end]
+
+        return json.loads(json_text)
+
+    except Exception as e:
+        return {
+            "score": 0,
+            "judgement": "エラー",
+            "comment": f"GPTエラー: {str(e)}"
+        }
+
+# =========================
+# メイン関数
+# =========================
 
 @app.function_name(name="screening")
 @app.route(route="screening", methods=["GET"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening step4 (series-safe) start")
+    logging.info("screening step5 start")
 
     symbol = req.params.get("symbol")
     if not symbol:
@@ -147,17 +251,15 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         ema50 = safe_float(latest["EMA50"])
         atr = safe_float(latest["ATR"])
 
-        # --- slope_ema20（Series 完全排除） ---
         ema20_prev = safe_float(df["EMA20"].iloc[-5])
         slope_ema20 = safe_float(ema20 - ema20_prev)
 
-        # --- volume_ratio（Series 完全排除） ---
         vol_ma20 = safe_float(latest["vol_ma20"])
-        volume_ratio = safe_float(latest["Volume"]) / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
+        volume = safe_float(latest["Volume"])
+        volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
 
         # --- 反転強度 ---
         recent = df.tail(120)
-
         peak_price = safe_float(recent["High"].max())
         bottom_price = safe_float(recent["Low"].min())
 
@@ -186,7 +288,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             cond_mc
         ])
 
-        # --- スコア（Series 完全排除） ---
+        # --- スコア ---
         score = calc_score(
             drop_rate,
             reversal_rate,
@@ -196,6 +298,14 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             slope_ema20,
             volume_ratio,
             atr
+        )
+
+        # --- GPT スコア ---
+        gpt = gpt_score(
+            symbol, symbol, close_price, market_cap,
+            drop_rate, reversal_rate, reversal_strength,
+            ema20, ema50, slope_ema20,
+            atr, volume, vol_ma20, volume_ratio
         )
 
         result = {
@@ -211,6 +321,9 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             "slope_ema20": slope_ema20,
             "volume_ratio": volume_ratio,
             "score": score,
+            "gpt_score": gpt.get("score"),
+            "gpt_judgement": gpt.get("judgement"),
+            "gpt_comment": gpt.get("comment"),
             "conditions": {
                 "drop_ok": cond_drop,
                 "reversal_ok": cond_rev,
