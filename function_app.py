@@ -33,10 +33,20 @@ def calc_atr(df, window=14):
     atr = tr.rolling(window).mean()
     return atr
 
-# --- スコア計算（Gradio版を忠実に移植） ---
+# --- スコア計算（Series 完全排除版） ---
 def calc_score(drop_rate, reversal_rate, reversal_strength,
                ema20, ema50, slope_ema20,
                volume_ratio, atr):
+
+    # すべて float に強制変換
+    drop_rate = float(drop_rate)
+    reversal_rate = float(reversal_rate)
+    reversal_strength = float(reversal_strength)
+    ema20 = float(ema20)
+    ema50 = float(ema50)
+    slope_ema20 = float(slope_ema20)
+    volume_ratio = float(volume_ratio)
+    atr = float(atr)
 
     score = 0
 
@@ -86,7 +96,7 @@ def calc_score(drop_rate, reversal_rate, reversal_strength,
 @app.function_name(name="screening")
 @app.route(route="screening", methods=["GET"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening step4 start")
+    logging.info("screening step4 (series-safe) start")
 
     symbol = req.params.get("symbol")
     if not symbol:
@@ -137,12 +147,13 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         ema50 = safe_float(latest["EMA50"])
         atr = safe_float(latest["ATR"])
 
-        # --- slope_ema20 ---
-        slope_ema20 = ema20 - safe_float(df["EMA20"].iloc[-5])
+        # --- slope_ema20（Series 完全排除） ---
+        ema20_prev = safe_float(df["EMA20"].iloc[-5])
+        slope_ema20 = safe_float(ema20 - ema20_prev)
 
-        # --- volume_ratio ---
+        # --- volume_ratio（Series 完全排除） ---
         vol_ma20 = safe_float(latest["vol_ma20"])
-        volume_ratio = latest["Volume"] / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
+        volume_ratio = safe_float(latest["Volume"]) / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
 
         # --- 反転強度 ---
         recent = df.tail(120)
@@ -150,11 +161,11 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         peak_price = safe_float(recent["High"].max())
         bottom_price = safe_float(recent["Low"].min())
 
-        drop_rate = (bottom_price / peak_price - 1) * 100 if peak_price else None
-        reversal_rate = (close_price / bottom_price - 1) * 100 if bottom_price else None
+        drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
+        reversal_rate = safe_float((close_price / bottom_price - 1) * 100) if bottom_price else None
 
         if drop_rate and drop_rate != 0:
-            reversal_strength = reversal_rate / abs(drop_rate)
+            reversal_strength = safe_float(reversal_rate / abs(drop_rate))
         else:
             reversal_strength = None
 
@@ -175,7 +186,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             cond_mc
         ])
 
-        # --- スコア ---
+        # --- スコア（Series 完全排除） ---
         score = calc_score(
             drop_rate,
             reversal_rate,
