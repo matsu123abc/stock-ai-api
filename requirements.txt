@@ -8,4 +8,7 @@ lxml
 python-dateutil
 pytz
 azure-storage-blob
+ta
+openai
+python-dotenv
 
