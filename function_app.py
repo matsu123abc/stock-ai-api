@@ -285,10 +285,90 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
             except Exception as e:
                 results.append({"symbol": symbol, "error": str(e)})
 
+
+        # --- HTML テーブルを組み立てる ---
+        header = """
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Screening Result</title>
+            <style>
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 12px; }
+                th { background: #f0f0f0; }
+                td.comment { max-width: 600px; }
+            </style>
+        </head>
+        <body>
+        <h2>Screening Result</h2>
+        <table>
+            <tr>
+                <th>symbol</th>
+                <th>close</th>
+                <th>score</th>
+                <th>GPT score</th>
+                <th>judgement</th>
+                <th>drop%</th>
+                <th>rev%</th>
+                <th>rev_strength</th>
+                <th>EMA20</th>
+                <th>EMA50</th>
+                <th>slope_ema20</th>
+                <th>ATR</th>
+                <th>vol_ratio</th>
+                <th>market_cap(億)</th>
+                <th>GPT comment</th>
+                <th>error</th>
+            </tr>
+        """
+
+        rows = ""
+        for r in results:
+            if "error" in r:
+                rows += f"""
+                <tr>
+                    <td>{r.get('symbol','')}</td>
+                    <td colspan="14"></td>
+                    <td></td>
+                    <td>{r.get('error','')}</td>
+                </tr>
+                """
+                continue
+
+            rows += f"""
+            <tr>
+                <td>{r.get('symbol','')}</td>
+                <td>{r.get('close','')}</td>
+                <td>{r.get('score','')}</td>
+                <td>{r.get('gpt_score','')}</td>
+                <td>{r.get('gpt_judgement','')}</td>
+                <td>{r.get('drop_rate','')}</td>
+                <td>{r.get('reversal_rate','')}</td>
+                <td>{r.get('reversal_strength','')}</td>
+                <td>{r.get('EMA20','')}</td>
+                <td>{r.get('EMA50','')}</td>
+                <td>{r.get('slope_ema20','')}</td>
+                <td>{r.get('ATR','')}</td>
+                <td>{r.get('volume_ratio','')}</td>
+                <td>{r.get('market_cap','')}</td>
+                <td class="comment">{r.get('gpt_comment','')}</td>
+                <td></td>
+            </tr>
+            """
+
+        footer = """
+        </table>
+        </body>
+        </html>
+        """
+
+        html = header + rows + footer
+
         return func.HttpResponse(
-            json.dumps(results, ensure_ascii=False),
-            mimetype="application/json"
+            html,
+            mimetype="text/html"
         )
+
 
     except Exception as e:
         return func.HttpResponse(
