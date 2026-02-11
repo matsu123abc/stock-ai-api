@@ -11,3 +11,4 @@ azure-storage-blob
 ta
 openai
 python-dotenv
+
