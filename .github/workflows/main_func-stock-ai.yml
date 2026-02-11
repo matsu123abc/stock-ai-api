@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -27,11 +27,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ZIP を安全に作成する（package フォルダを作らない）
-      - name: Create ZIP package
-        run: |
-          zip -r function.zip . -x "*.git*" -x "function.zip"
-
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -39,8 +34,14 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy ZIP to Azure Function App
+      # ★ Oryx build（Flex Consumption の正しい方法）
+      - name: Build with Oryx
+        run: |
+          oryx build . --platform python --platform-version 3.11 -o output
+
+      # ★ WebApps Deploy（ZIP Deploy ではない）
+      - name: Deploy to Azure Function App
         uses: azure/webapps-deploy@v2
         with:
           app-name: func-stock-ai
-          package: function.zip
+          package: output
