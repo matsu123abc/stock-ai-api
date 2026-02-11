@@ -296,10 +296,7 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
                 table { border-collapse: collapse; width: 100%; }
                 th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 12px; }
                 th { background: #f0f0f0; }
-                td.comment { 
-                    white-space: normal;
-                    max-width: none;
-                }
+                td.comment { max-width: 2400px; }
             </style>
         </head>
         <body>
