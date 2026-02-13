@@ -7,6 +7,7 @@ import azure.functions as func
 import yfinance as yf
 import pandas as pd
 from openai import AzureOpenAI
+from azure.storage.blob import BlobServiceClient
 
 app = func.FunctionApp()
 
@@ -166,13 +167,25 @@ JSON形式:
 # =========================
 
 @app.function_name(name="screening_csv")
-@app.route(route="screening_csv", methods=["POST"], auth_level="anonymous")
+@app.route(route="screening_csv", methods=["GET"], auth_level="anonymous")
 def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening step7 start")
+    logging.info("screening step9 start")
 
     try:
-        # --- CSV を Body から読み込む ---
-        csv_text = req.get_body().decode("utf-8")
+        # --- Blob から CSV を読み込む ---
+        connect_str = os.getenv("AzureWebJobsStorage")
+        container_name = os.getenv("STOCK_CONTAINER")
+        blob_name = os.getenv("STOCK_CSV")
+
+        blob_service = BlobServiceClient.from_connection_string(connect_str)
+        container_client = blob_service.get_container_client(container_name)
+        blob_client = container_client.get_blob_client(blob_name)
+
+        # CSV をダウンロード
+        csv_bytes = blob_client.download_blob().readall()
+        csv_text = csv_bytes.decode("utf-8")
+
+        # pandas で読み込み
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
         if "コード" not in df_csv.columns:
