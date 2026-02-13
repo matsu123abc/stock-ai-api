@@ -14,6 +14,28 @@ app = func.FunctionApp()
 # =========================
 # 共通ユーティリティ
 # =========================
+def load_csv_from_blob(container_name: str, blob_name: str, connection_string: str):
+    """
+    Azure Blob Storage から CSV を読み込み、DataFrame を返す
+    """
+    try:
+        # Blob クライアント作成
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        container_client = blob_service_client.get_container_client(container_name)
+        blob_client = container_client.get_blob_client(blob_name)
+
+        # Blob データを取得
+        stream = blob_client.download_blob()
+        csv_bytes = stream.readall()
+
+        # pandas DataFrame に変換
+        df = pd.read_csv(io.BytesIO(csv_bytes), encoding="utf-8")
+
+        return df
+
+    except Exception as e:
+        raise Exception(f"Blob 読み込みエラー: {str(e)}")
+
 
 def safe_float(x):
     try:
@@ -169,23 +191,36 @@ JSON形式:
 @app.function_name(name="screening_csv")
 @app.route(route="screening_csv", methods=["GET"], auth_level="anonymous")
 def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening step9 start")
+    logging.info("screening_csv start")
 
     try:
-        # --- Blob から CSV を読み込む ---
+        # --- Blob Storage 接続情報 ---
         connect_str = os.getenv("AzureWebJobsStorage")
         container_name = os.getenv("STOCK_CONTAINER")
-        blob_name = os.getenv("STOCK_CSV")
+        blob_name = req.params.get("block")  # ← UI から block=prime_list-1.csv のように指定
 
+        if not blob_name:
+            return func.HttpResponse(
+                json.dumps({"error": "block パラメータが必要です（例: ?block=prime_list-1.csv）"}),
+                mimetype="application/json",
+                status_code=400
+            )
+
+        # --- Blob クライアント作成 ---
         blob_service = BlobServiceClient.from_connection_string(connect_str)
         container_client = blob_service.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob_name)
 
-        # CSV をダウンロード
+        # --- CSV ダウンロード ---
         csv_bytes = blob_client.download_blob().readall()
-        csv_text = csv_bytes.decode("utf-8")
 
-        # pandas で読み込み
+        # UTF-8 / UTF-8 BOM の両方に対応
+        try:
+            csv_text = csv_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            csv_text = csv_bytes.decode("utf-8-sig")
+
+        # --- pandas で読み込み ---
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
         if "コード" not in df_csv.columns:
@@ -395,13 +430,15 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
         html = header + rows + footer
 
         return func.HttpResponse(
-            html,
-            mimetype="text/html"
+            json.dumps({"status": "CSV 読み込み成功", "rows": len(df_csv)}),
+            mimetype="application/json"
         )
 
     except Exception as e:
+        logging.exception("screening_csv error")
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             mimetype="application/json",
             status_code=500
         )
+
