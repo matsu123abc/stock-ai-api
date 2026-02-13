@@ -319,7 +319,7 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
         result_prefix = os.getenv("RESULT_PREFIX", "results")
 
         today = datetime.now().strftime("%Y-%m-%d")
-        output_blob_name = f"{result_prefix}/{today}/block{block}.json"
+        output_blob_name = f"{result_prefix}/{today}/sample_30.json"
 
         output_blob = blob_service.get_blob_client(result_container, output_blob_name)
 
