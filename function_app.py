@@ -191,36 +191,28 @@ JSON形式:
 @app.function_name(name="screening_csv")
 @app.route(route="screening_csv", methods=["GET"], auth_level="anonymous")
 def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening_csv start")
+    logging.info("screening step9 start")
 
     try:
-        # --- Blob Storage 接続情報 ---
+        # --- ブロック番号を取得（デフォルトは1） ---
+        block = req.params.get("block", "1")
+
+        # --- Blob から CSV を読み込む ---
         connect_str = os.getenv("AzureWebJobsStorage")
         container_name = os.getenv("STOCK_CONTAINER")
-        blob_name = req.params.get("block")  # ← UI から block=prime_list-1.csv のように指定
 
-        if not blob_name:
-            return func.HttpResponse(
-                json.dumps({"error": "block パラメータが必要です（例: ?block=prime_list-1.csv）"}),
-                mimetype="application/json",
-                status_code=400
-            )
+        # ブロック番号に応じてファイル名を決定
+        blob_name = f"prime_list-{block}.csv"
 
-        # --- Blob クライアント作成 ---
         blob_service = BlobServiceClient.from_connection_string(connect_str)
         container_client = blob_service.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob_name)
 
-        # --- CSV ダウンロード ---
+        # CSV をダウンロード
         csv_bytes = blob_client.download_blob().readall()
+        csv_text = csv_bytes.decode("utf-8")
 
-        # UTF-8 / UTF-8 BOM の両方に対応
-        try:
-            csv_text = csv_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            csv_text = csv_bytes.decode("utf-8-sig")
-
-        # --- pandas で読み込み ---
+        # pandas で読み込み
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
         if "コード" not in df_csv.columns:
