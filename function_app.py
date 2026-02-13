@@ -196,6 +196,10 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening step7 start")
 
     try:
+        # ★ これを追加（必須）
+        connect_str = os.getenv("AzureWebJobsStorage")
+        blob_service = BlobServiceClient.from_connection_string(connect_str)
+        
         # --- CSV を Body から読み込む ---
         csv_text = req.get_body().decode("utf-8")
         df_csv = pd.read_csv(io.StringIO(csv_text))
