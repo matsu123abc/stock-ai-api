@@ -187,30 +187,16 @@ JSON形式:
 # =========================
 # メイン関数（CSV アップロード対応）
 # =========================
+
+
 @app.function_name(name="screening_csv")
-@app.route(route="screening_csv", methods=["GET"], auth_level="anonymous")
+@app.route(route="screening_csv", methods=["POST"], auth_level="anonymous")
 def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening step9 start")
+    logging.info("screening step7 start")
 
     try:
-        # --- ブロック番号を取得（デフォルトは1） ---
-        block = req.params.get("block", "1")
-
-        # --- Blob から CSV を読み込む ---
-        connect_str = os.getenv("AzureWebJobsStorage")
-        input_container = os.getenv("STOCK_CONTAINER")
-        input_blob_name = f"prime_list-{block}.csv"
-
-        blob_service = BlobServiceClient.from_connection_string(connect_str)
-        input_blob = blob_service.get_blob_client(input_container, input_blob_name)
-
-        csv_bytes = input_blob.download_blob().readall()
-
-        try:
-            csv_text = csv_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            csv_text = csv_bytes.decode("utf-8-sig")
-
+        # --- CSV を Body から読み込む ---
+        csv_text = req.get_body().decode("utf-8")
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
         if "コード" not in df_csv.columns:
