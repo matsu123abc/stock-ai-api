@@ -187,7 +187,6 @@ JSON形式:
 # =========================
 # メイン関数（CSV アップロード対応）
 # =========================
-
 @app.function_name(name="screening_csv")
 @app.route(route="screening_csv", methods=["GET"], auth_level="anonymous")
 def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
@@ -199,20 +198,19 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
 
         # --- Blob から CSV を読み込む ---
         connect_str = os.getenv("AzureWebJobsStorage")
-        container_name = os.getenv("STOCK_CONTAINER")
-
-        # ブロック番号に応じてファイル名を決定
-        blob_name = f"prime_list-{block}.csv"
+        input_container = os.getenv("STOCK_CONTAINER")
+        input_blob_name = f"prime_list-{block}.csv"
 
         blob_service = BlobServiceClient.from_connection_string(connect_str)
-        container_client = blob_service.get_container_client(container_name)
-        blob_client = container_client.get_blob_client(blob_name)
+        input_blob = blob_service.get_blob_client(input_container, input_blob_name)
 
-        # CSV をダウンロード
-        csv_bytes = blob_client.download_blob().readall()
-        csv_text = csv_bytes.decode("utf-8")
+        csv_bytes = input_blob.download_blob().readall()
 
-        # pandas で読み込み
+        try:
+            csv_text = csv_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            csv_text = csv_bytes.decode("utf-8-sig")
+
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
         if "コード" not in df_csv.columns:
@@ -222,6 +220,7 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
 
+        # --- スクリーニング結果 ---
         results = []
 
         for code in df_csv["コード"]:
@@ -247,7 +246,6 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
                         mc = info.get("marketCap", None)
 
                     market_cap = int(mc / 100000000) if mc else None
-
                 except:
                     market_cap = None
 
@@ -325,104 +323,28 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
             except Exception as e:
                 results.append({"symbol": symbol, "error": str(e)})
 
+        # ============================
+        # ★ HTML 生成は完全に削除 ★
+        # ============================
 
-        # --- HTML テーブルを組み立てる ---
-        header = """
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <title>Screening Result</title>
-            <style>
-                .table-wrapper {
-                    overflow-x: auto;
-                    width: 100%;
-                }
-                table {
-                    border-collapse: collapse;
-                    min-width: 2000px;   /* ← 画面幅より広くする */
-                }
-                th, td {
-                    border: 1px solid #ccc;
-                    padding: 4px 6px;
-                    font-size: 12px;
-                }
-                th { background: #f0f0f0; }
-                td.comment { 
-                    white-space: normal;   /* 折り返しを許可 */
-                }
-            </style>
-        </head>
-        <body>
-        <h2>Screening Result</h2>
+        # --- JSON 保存 ---
+        result_container = os.getenv("RESULT_CONTAINER")
+        result_prefix = os.getenv("RESULT_PREFIX", "results")
 
-        <div class="table-wrapper">
-        <table>
-            <tr>
-                <th>symbol</th>
-                <th>close</th>
-                <th>score</th>
-                <th>GPT score</th>
-                <th>judgement</th>
-                <th>drop%</th>
-                <th>rev%</th>
-                <th>rev_strength</th>
-                <th>EMA20</th>
-                <th>EMA50</th>
-                <th>slope_ema20</th>
-                <th>ATR</th>
-                <th>vol_ratio</th>
-                <th>market_cap(億)</th>
-                <th>GPT comment</th>
-                <th>error</th>
-            </tr>
-        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        output_blob_name = f"{result_prefix}/{today}/block{block}.json"
 
-        rows = ""
-        for r in results:
-            if "error" in r:
-                rows += f"""
-                <tr>
-                    <td>{r.get('symbol','')}</td>
-                    <td colspan="14"></td>
-                    <td></td>
-                    <td>{r.get('error','')}</td>
-                </tr>
-                """
-                continue
+        output_blob = blob_service.get_blob_client(result_container, output_blob_name)
 
-            rows += f"""
-            <tr>
-                <td>{r.get('symbol','')}</td>
-                <td>{r.get('close','')}</td>
-                <td>{r.get('score','')}</td>
-                <td>{r.get('gpt_score','')}</td>
-                <td>{r.get('gpt_judgement','')}</td>
-                <td>{r.get('drop_rate','')}</td>
-                <td>{r.get('reversal_rate','')}</td>
-                <td>{r.get('reversal_strength','')}</td>
-                <td>{r.get('EMA20','')}</td>
-                <td>{r.get('EMA50','')}</td>
-                <td>{r.get('slope_ema20','')}</td>
-                <td>{r.get('ATR','')}</td>
-                <td>{r.get('volume_ratio','')}</td>
-                <td>{r.get('market_cap','')}</td>
-                <td class="comment">{r.get('gpt_comment','')}</td>
-                <td></td>
-            </tr>
-            """
-
-        footer = """
-        </table>
-        </div>
-
-        </body>
-        </html>
-        """
-
-        html = header + rows + footer
+        json_text = json.dumps(results, ensure_ascii=False, indent=2)
+        output_blob.upload_blob(json_text, overwrite=True)
 
         return func.HttpResponse(
-            json.dumps({"status": "CSV 読み込み成功", "rows": len(df_csv)}),
+            json.dumps({
+                "status": "success",
+                "saved_to": output_blob_name,
+                "count": len(results)
+            }, ensure_ascii=False),
             mimetype="application/json"
         )
 
@@ -433,4 +355,3 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
-
