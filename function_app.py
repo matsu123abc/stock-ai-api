@@ -8,6 +8,7 @@ import yfinance as yf
 import pandas as pd
 from openai import AzureOpenAI
 from azure.storage.blob import BlobServiceClient
+from datetime import datetime
 
 app = func.FunctionApp()
 
