@@ -178,6 +178,10 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         connect_str = os.getenv("AzureWebJobsStorage")
         blob_service = BlobServiceClient.from_connection_string(connect_str)
 
+        # --- UI から送られた CSV のファイル名を取得 ---
+        csv_filename = req.headers.get("X-Filename", "uploaded.csv")
+        json_filename = csv_filename.replace(".csv", ".json")
+
         # --- CSV を Body から読み込む ---
         csv_text = req.get_body().decode("utf-8")
         df_csv = pd.read_csv(io.StringIO(csv_text))
@@ -311,7 +315,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         result_prefix = os.getenv("RESULT_PREFIX", "results")
 
         today = datetime.now().strftime("%Y-%m-%d")
-        output_blob_name = f"{result_prefix}/{today}/sample_30.json"
+        output_blob_name = f"{result_prefix}/{today}/{json_filename}"
 
         output_blob = blob_service.get_blob_client(result_container, output_blob_name)
 
