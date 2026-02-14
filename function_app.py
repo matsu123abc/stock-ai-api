@@ -15,28 +15,6 @@ app = func.FunctionApp()
 # =========================
 # 共通ユーティリティ
 # =========================
-def load_csv_from_blob(container_name: str, blob_name: str, connection_string: str):
-    """
-    Azure Blob Storage から CSV を読み込み、DataFrame を返す
-    """
-    try:
-        # Blob クライアント作成
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-        container_client = blob_service_client.get_container_client(container_name)
-        blob_client = container_client.get_blob_client(blob_name)
-
-        # Blob データを取得
-        stream = blob_client.download_blob()
-        csv_bytes = stream.readall()
-
-        # pandas DataFrame に変換
-        df = pd.read_csv(io.BytesIO(csv_bytes), encoding="utf-8")
-
-        return df
-
-    except Exception as e:
-        raise Exception(f"Blob 読み込みエラー: {str(e)}")
-
 
 def safe_float(x):
     try:
@@ -119,6 +97,7 @@ def calc_score(drop_rate, reversal_rate, reversal_strength,
 
     return score
 
+
 def gpt_score(symbol, name, price, market_cap,
               drop_rate, reversal_rate, reversal_strength,
               ema20, ema50, slope_ema20,
@@ -186,13 +165,13 @@ JSON形式:
 
 
 # =========================
-# メイン関数（CSV アップロード対応）
+# メイン関数（screening ひとつだけ）
 # =========================
 
-@app.function_name(name="screening_csv")
-@app.route(route="screening_csv", methods=["POST"], auth_level="anonymous")
-def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("screening step7 start")
+@app.function_name(name="screening")
+@app.route(route="screening", methods=["POST"], auth_level="anonymous")
+def screening(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("screening start")
 
     try:
         # Blob 接続
@@ -213,13 +192,15 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
                     status_code=400
                 )
 
-        # --- 辞書化（高速アクセス用） ---
+        # --- 辞書化 ---
         name_dict = dict(zip(df_csv["コード"], df_csv["銘柄名"]))
         market_dict = dict(zip(df_csv["コード"], df_csv["市場"]))
 
-        # --- スクリーニング結果 ---
         results = []
 
+        # =========================
+        # スクリーニングロジック
+        # =========================
         for code in df_csv["コード"]:
             symbol = f"{code}.T"
             company_name = name_dict.get(code, "不明")
@@ -302,7 +283,6 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
                     atr, volume, vol_ma20, volume_ratio
                 )
 
-                # --- 結果追加（銘柄名・市場を含む） ---
                 results.append({
                     "symbol": symbol,
                     "company_name": company_name,
@@ -348,10 +328,9 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        logging.exception("screening_csv error")
+        logging.exception("screening error")
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             mimetype="application/json",
             status_code=500
         )
-
