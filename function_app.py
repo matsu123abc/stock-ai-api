@@ -189,35 +189,44 @@ JSON形式:
 # メイン関数（CSV アップロード対応）
 # =========================
 
-
 @app.function_name(name="screening_csv")
 @app.route(route="screening_csv", methods=["POST"], auth_level="anonymous")
 def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening step7 start")
 
     try:
-        # ★ これを追加（必須）
+        # Blob 接続
         connect_str = os.getenv("AzureWebJobsStorage")
         blob_service = BlobServiceClient.from_connection_string(connect_str)
-        
+
         # --- CSV を Body から読み込む ---
         csv_text = req.get_body().decode("utf-8")
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
-        if "コード" not in df_csv.columns:
-            return func.HttpResponse(
-                json.dumps({"error": "CSV に 'コード' 列がありません"}),
-                mimetype="application/json",
-                status_code=400
-            )
+        # --- 必須列チェック ---
+        required_cols = ["コード", "銘柄名", "市場"]
+        for col in required_cols:
+            if col not in df_csv.columns:
+                return func.HttpResponse(
+                    json.dumps({"error": f"CSV に '{col}' 列がありません"}),
+                    mimetype="application/json",
+                    status_code=400
+                )
+
+        # --- 辞書化（高速アクセス用） ---
+        name_dict = dict(zip(df_csv["コード"], df_csv["銘柄名"]))
+        market_dict = dict(zip(df_csv["コード"], df_csv["市場"]))
 
         # --- スクリーニング結果 ---
         results = []
 
         for code in df_csv["コード"]:
             symbol = f"{code}.T"
+            company_name = name_dict.get(code, "不明")
+            market = market_dict.get(code, "不明")
 
             try:
+                # --- 株価データ取得 ---
                 df = yf.download(symbol, period="90d", interval="1h")
                 if df is None or df.empty:
                     results.append({"symbol": symbol, "error": "株価データ取得失敗"})
@@ -287,14 +296,17 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
 
                 # --- GPT スコア ---
                 gpt = gpt_score(
-                    symbol, symbol, close_price, market_cap,
+                    symbol, company_name, close_price, market_cap,
                     drop_rate, reversal_rate, reversal_strength,
                     ema20, ema50, slope_ema20,
                     atr, volume, vol_ma20, volume_ratio
                 )
 
+                # --- 結果追加（銘柄名・市場を含む） ---
                 results.append({
                     "symbol": symbol,
+                    "company_name": company_name,
+                    "market": market,
                     "close": close_price,
                     "EMA20": ema20,
                     "EMA50": ema50,
@@ -313,10 +325,6 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
 
             except Exception as e:
                 results.append({"symbol": symbol, "error": str(e)})
-
-        # ============================
-        # ★ HTML 生成は完全に削除 ★
-        # ============================
 
         # --- JSON 保存 ---
         result_container = os.getenv("RESULT_CONTAINER")
@@ -346,3 +354,4 @@ def screening_csv(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
+
