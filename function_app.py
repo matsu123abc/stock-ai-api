@@ -439,7 +439,7 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
         )
 
-        # --- GPT に渡す比較しやすい形式を作成 ---
+        # --- GPT に渡す比較しやすい形式 ---
         items_text = ""
         for r in results:
             items_text += (
@@ -462,10 +462,10 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
 以下の銘柄データを比較し、
 「買い候補トップ3」を選び、JSON 形式で出力してください。
 
-【銘柄データ（比較用）】
+【銘柄データ】
 {items_text}
 
-【評価基準（比較を必須とする）】
+【評価基準】
 1. 反転強度（最重要）
 2. 出来高急増率（volume_ratio）
 3. ATR（リスクの低さ）
@@ -474,11 +474,11 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
 6. score と gpt_score の総合点
 
 【文章ルール（差別化を強制）】
-・各銘柄の理由は、必ず「他銘柄との比較」で書くこと
-・同じ観点を繰り返さないこと
-・1位は最も優位性が高い理由を書く
-・2位は1位との違いを明確にする
-・3位はリスクを踏まえた上での相対的な魅力を書く
+・1位は「最も強い攻めの理由」を書く（勢い・強さ・優位性）
+・2位は「強みと弱みのバランス型理由」を書く（比較して中間的）
+・3位は「リスクはあるが条件次第で狙える理由」を書く（弱点を踏まえた魅力）
+・3銘柄の理由は、必ず異なる観点で書くこと
+・同じ表現や文章構造を繰り返さないこと
 ・理由は200文字以内、リスクと注意点は100文字以内
 
 【出力フォーマット（JSON のみ）】
@@ -488,14 +488,26 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
       "rank": 1,
       "symbol": "XXXX.T",
       "company": "銘柄名",
-      "reason": "200文字以内（比較ベース）",
+      "reason": "200文字以内（攻めの理由）",
       "risk": "100文字以内",
       "note": "100文字以内"
     }},
     {{
-      "rank": 2, ... }},
+      "rank": 2,
+      "symbol": "...",
+      "company": "...",
+      "reason": "200文字以内（バランス型理由）",
+      "risk": "100文字以内",
+      "note": "100文字以内"
+    }},
     {{
-      "rank": 3, ... }}
+      "rank": 3,
+      "symbol": "...",
+      "company": "...",
+      "reason": "200文字以内（条件次第で狙える理由）",
+      "risk": "100文字以内",
+      "note": "100文字以内"
+    }}
   ]
 }}
 前後に説明文は書かず、JSON のみを返してください。
