@@ -520,7 +520,8 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
             f"slope_ema50_mid={r.get('slope_ema50_mid')}, "
             f"drop_rate_mid={r.get('drop_rate_mid')}, "
             f"reversal_rate_mid={r.get('reversal_rate_mid')}, "
-            f"reversal_strength_mid={r.get('reversal_strength_mid')}\n"
+            f"reversal_strength_mid={r.get('reversal_strength_mid')}"
+            "\n"
         )
 
         prompt = f"""
