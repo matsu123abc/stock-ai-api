@@ -172,16 +172,48 @@ JSON形式:
 @app.route(route="screening", methods=["POST"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening start")
-        
+
+    # ★ UI に返すログ（最終まとめ用）
     logs = []
-    def log(msg):
-        logs.append(msg)
-        logging.info(msg)
 
     try:
         # Blob 接続
         connect_str = os.getenv("AzureWebJobsStorage")
         blob_service = BlobServiceClient.from_connection_string(connect_str)
+
+        # 結果保存先コンテナ
+        result_container = os.getenv("RESULT_CONTAINER")
+
+        # ★★★ Blob にリアルタイム追記する log() ★★★
+        def log(msg):
+            # UI 用
+            logs.append(msg)
+
+            # Application Insights 用
+            logging.info(msg)
+
+            # Blob にリアルタイム追記
+            try:
+                today = datetime.now().strftime("%Y-%m-%d")
+                log_blob_name = f"logs/{today}/screening.log"
+
+                log_blob = blob_service.get_blob_client(
+                    container=result_container,
+                    blob=log_blob_name
+                )
+
+                # 既存ログを取得（なければ空）
+                try:
+                    old = log_blob.download_blob().readall().decode("utf-8")
+                except:
+                    old = ""
+
+                # 新しいログを追記
+                new_text = old + msg + "\n"
+                log_blob.upload_blob(new_text, overwrite=True)
+
+            except Exception as e:
+                logging.error(f"[LOG-ERROR] Failed to write log to blob: {e}")
 
         # --- UI から送られた CSV のファイル名を取得 ---
         csv_filename = req.headers.get("X-Filename", "uploaded.csv")
@@ -326,9 +358,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
                 continue
 
         # --- JSON 保存 ---
-        result_container = os.getenv("RESULT_CONTAINER")
         result_prefix = os.getenv("RESULT_PREFIX", "results")
-
         today = datetime.now().strftime("%Y-%m-%d")
         output_blob_name = f"{result_prefix}/{today}/{json_filename}"
 
@@ -336,7 +366,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
         json_text = json.dumps(results, ensure_ascii=False, indent=2)
         output_blob.upload_blob(json_text, overwrite=True)
-
 
         return func.HttpResponse(
             json.dumps({
