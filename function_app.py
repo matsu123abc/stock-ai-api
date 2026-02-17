@@ -172,6 +172,11 @@ JSON形式:
 @app.route(route="screening", methods=["POST"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening start")
+        
+    logs = []
+    def log(msg):
+        logs.append(msg)
+        logging.info(msg)
 
     try:
         # Blob 接続
@@ -211,12 +216,19 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             market = market_dict.get(code, "不明")
 
             try:
-                # --- 株価データ取得 ---
+                # --- 株価データ取得開始 ---
+                log(f"[DOWNLOAD-START] {symbol}: downloading 90d/1h data")
+
                 df = yf.download(symbol, period="90d", interval="1h")
-                logging.info(f"[DOWNLOAD] {symbol}: {len(df)} rows downloaded")
+
+                # --- データが空の場合 ---
                 if df is None or df.empty:
+                    log(f"[DOWNLOAD-WARN] {symbol}: no data returned")
                     results.append({"symbol": symbol, "error": "株価データ取得失敗"})
                     continue
+
+                # --- 正常取得 ---
+                log(f"[DOWNLOAD-END] {symbol}: {len(df)} rows downloaded")
 
                 # --- 時価総額 ---
                 try:
@@ -309,8 +321,9 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
                 })
 
             except Exception as e:
-                logging.error(f"[ERROR] {symbol}: Failed to download data: {e}")
-                results.append({"symbol": symbol, "error": str(e)})
+                log(f"[DOWNLOAD-ERROR] {symbol}: Failed to download data: {e}")
+                results.append({"symbol": symbol, "error": "株価データ取得エラー"})
+                continue
 
         # --- JSON 保存 ---
         result_container = os.getenv("RESULT_CONTAINER")
@@ -324,11 +337,11 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         json_text = json.dumps(results, ensure_ascii=False, indent=2)
         output_blob.upload_blob(json_text, overwrite=True)
 
+
         return func.HttpResponse(
             json.dumps({
-                "status": "success",
                 "saved_to": output_blob_name,
-                "count": len(results)
+                "logs": logs
             }, ensure_ascii=False),
             mimetype="application/json"
         )
