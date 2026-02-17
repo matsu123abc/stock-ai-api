@@ -427,7 +427,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 # AI 買い候補ランキング生成
 # =========================
 @app.function_name(name="ranking")
-@app.route(route="ranking", methods=["POST"], auth_level="anonymous"])
+@app.route(route="ranking", methods=["POST"], auth_level="anonymous")
 def ranking(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
