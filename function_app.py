@@ -173,35 +173,38 @@ JSON形式:
 def screening(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening start")
 
-    # ★ UI に返すログ（最終まとめ用）
     logs = []
 
     try:
-        # Blob 接続
+        # ① Blob 接続（最優先）
         connect_str = os.getenv("AzureWebJobsStorage")
         blob_service = BlobServiceClient.from_connection_string(connect_str)
 
-        # 結果保存先コンテナ
+        # ② 結果保存先コンテナ
         result_container = os.getenv("RESULT_CONTAINER")
 
-        # ★★★ Blob にリアルタイム追記する log() ★★★
-        def log(msg):
-            # UI 用
-            logs.append(msg)
+        # ③ ログ初期化（前回分を削除）
+        today = datetime.now().strftime("%Y-%m-%d")
+        log_blob_name = f"logs/{today}/screening.log"
 
-            # Application Insights 用
+        log_blob = blob_service.get_blob_client(
+            container=result_container,
+            blob=log_blob_name
+        )
+
+        # 空で上書き（存在しなくても OK）
+        try:
+            log_blob.upload_blob("", overwrite=True)
+            logging.info("[LOG] previous log cleared")
+        except Exception as e:
+            logging.error(f"[LOG-ERROR] failed to clear log: {e}")
+
+        # ④ log() を定義（ここから追記が始まる）
+        def log(msg):
+            logs.append(msg)
             logging.info(msg)
 
-            # Blob にリアルタイム追記
             try:
-                today = datetime.now().strftime("%Y-%m-%d")
-                log_blob_name = f"logs/{today}/screening.log"
-
-                log_blob = blob_service.get_blob_client(
-                    container=result_container,
-                    blob=log_blob_name
-                )
-
                 # 既存ログを取得（なければ空）
                 try:
                     old = log_blob.download_blob().readall().decode("utf-8")
