@@ -433,14 +433,13 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
         body = req.get_json()
         results = body.get("results", [])
 
-        # --- Azure OpenAI クライアント ---
         client = AzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
         )
 
-        # --- GPT に渡す銘柄リストを整形 ---
+        # --- GPT に渡す銘柄情報を詳細化 ---
         items_text = ""
         for r in results:
             items_text += (
@@ -449,10 +448,17 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
                 f"score: {r.get('score')}, "
                 f"gpt_score: {r.get('gpt_score')}, "
                 f"judgement: {r.get('gpt_judgement')}, "
+                f"drop_rate: {r.get('drop_rate')}, "
+                f"reversal_rate: {r.get('reversal_rate')}, "
+                f"reversal_strength: {r.get('reversal_strength')}, "
+                f"EMA20: {r.get('EMA20')}, "
+                f"EMA50: {r.get('EMA50')}, "
+                f"slope_ema20: {r.get('slope_ema20')}, "
+                f"ATR: {r.get('ATR')}, "
+                f"volume_ratio: {r.get('volume_ratio')}, "
                 f"comment: {r.get('gpt_comment')}\n"
             )
 
-        # --- GPT プロンプト ---
         prompt = f"""
 あなたは短期トレードの専門家です。
 以下の銘柄リストから、短期トレードの観点で「買い候補トップ3」を選び、
@@ -461,10 +467,19 @@ JSON 形式で出力してください。
 【銘柄リスト】
 {items_text}
 
-【評価方針】
-- score と gpt_score を重視しつつ、コメント内容も考慮して総合判断する
-- 「買い」寄りの銘柄を優先するが、リスクが高すぎるものは避ける
-- 同じような評価の場合は、リスクが相対的に低い銘柄を優先する
+【評価基準】
+1. 反転強度（最重要）
+2. EMA20 と EMA50 の位置関係
+3. 出来高急増率
+4. ATR（リスク）
+5. GPT コメントの内容
+6. score と gpt_score の総合点
+
+【文章ルール】
+・3銘柄の理由は、必ず異なる観点で書くこと
+・同じ表現や文章構造を繰り返さないこと
+・各銘柄の強み・弱みを、他銘柄と比較しながら書くこと
+・理由は200文字以内、リスクと注意点は100文字以内
 
 【出力フォーマット（JSON のみ）】
 {{
@@ -473,9 +488,9 @@ JSON 形式で出力してください。
       "rank": 1,
       "symbol": "XXXX.T",
       "company": "銘柄名",
-      "reason": "なぜ上位なのか（200文字以内）",
-      "risk": "主なリスク要因（100文字以内）",
-      "note": "注意点やトレード上のポイント（100文字以内）"
+      "reason": "200文字以内",
+      "risk": "100文字以内",
+      "note": "100文字以内"
     }},
     {{
       "rank": 2, ... }},
@@ -486,7 +501,6 @@ JSON 形式で出力してください。
 前後に説明文は書かず、JSON のみを返してください。
 """
 
-        # --- GPT 呼び出し ---
         res = client.chat.completions.create(
             model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
             messages=[{"role": "user", "content": prompt}],
@@ -496,8 +510,7 @@ JSON 形式で出力してください。
         raw = res.choices[0].message.content.strip()
         json_start = raw.find("{")
         json_end = raw.rfind("}") + 1
-        json_text = raw[json_start:json_end]
-        ranking_json = json.loads(json_text)
+        ranking_json = json.loads(raw[json_start:json_end])
 
         return func.HttpResponse(
             json.dumps(ranking_json, ensure_ascii=False, indent=2),
@@ -511,4 +524,3 @@ JSON 形式で出力してください。
             mimetype="application/json",
             status_code=500
         )
-
