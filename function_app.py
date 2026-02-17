@@ -422,3 +422,93 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
+    
+# =========================
+# AI 買い候補ランキング生成
+# =========================
+@app.function_name(name="ranking")
+@app.route(route="ranking", methods=["POST"], auth_level="anonymous")
+def ranking(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        body = req.get_json()
+        results = body.get("results", [])
+
+        # --- Azure OpenAI クライアント ---
+        client = AzureOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+        )
+
+        # --- GPT に渡す銘柄リストを整形 ---
+        items_text = ""
+        for r in results:
+            items_text += (
+                f"symbol: {r.get('symbol')}, "
+                f"company: {r.get('company_name')}, "
+                f"score: {r.get('score')}, "
+                f"gpt_score: {r.get('gpt_score')}, "
+                f"judgement: {r.get('gpt_judgement')}, "
+                f"comment: {r.get('gpt_comment')}\n"
+            )
+
+        # --- GPT プロンプト ---
+        prompt = f"""
+あなたは短期トレードの専門家です。
+以下の銘柄リストから、短期トレードの観点で「買い候補トップ3」を選び、
+JSON 形式で出力してください。
+
+【銘柄リスト】
+{items_text}
+
+【評価方針】
+- score と gpt_score を重視しつつ、コメント内容も考慮して総合判断する
+- 「買い」寄りの銘柄を優先するが、リスクが高すぎるものは避ける
+- 同じような評価の場合は、リスクが相対的に低い銘柄を優先する
+
+【出力フォーマット（JSON のみ）】
+{{
+  "ranking": [
+    {{
+      "rank": 1,
+      "symbol": "XXXX.T",
+      "company": "銘柄名",
+      "reason": "なぜ上位なのか（200文字以内）",
+      "risk": "主なリスク要因（100文字以内）",
+      "note": "注意点やトレード上のポイント（100文字以内）"
+    }},
+    {{
+      "rank": 2, ... }},
+    {{
+      "rank": 3, ... }}
+  ]
+}}
+前後に説明文は書かず、JSON のみを返してください。
+"""
+
+        # --- GPT 呼び出し ---
+        res = client.chat.completions.create(
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+
+        raw = res.choices[0].message.content.strip()
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        json_text = raw[json_start:json_end]
+        ranking_json = json.loads(json_text)
+
+        return func.HttpResponse(
+            json.dumps(ranking_json, ensure_ascii=False, indent=2),
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        logging.exception("ranking error")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            mimetype="application/json",
+            status_code=500
+        )
+
