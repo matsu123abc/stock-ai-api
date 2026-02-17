@@ -192,6 +192,9 @@ def screening_conditions(
 
 def process_symbol(symbol, company_name, market, log):
     try:
+        # =========================
+        # ① 短期データ（90日・1時間足）
+        # =========================
         log(f"[DOWNLOAD-START] {symbol}: downloading 90d/1h data")
 
         df = yf.download(symbol, period="90d", interval="1h")
@@ -219,7 +222,7 @@ def process_symbol(symbol, company_name, market, log):
         except:
             market_cap = None
 
-        # --- インジケータ ---
+        # --- 短期インジケータ ---
         df["EMA20"] = ema(df["Close"], 20)
         df["EMA50"] = ema(df["Close"], 50)
         df["ATR"] = calc_atr(df)
@@ -239,7 +242,7 @@ def process_symbol(symbol, company_name, market, log):
         volume = safe_float(latest["Volume"])
         volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
 
-        # --- 反転強度 ---
+        # --- 短期の反転強度 ---
         recent = df.tail(120)
         peak_price = safe_float(recent["High"].max())
         bottom_price = safe_float(recent["Low"].min())
@@ -252,7 +255,49 @@ def process_symbol(symbol, company_name, market, log):
         else:
             reversal_strength = None
 
-        # --- screening_conditions（反転特化） ---
+        # =========================
+        # ② 中期データ（180日・日足）
+        # =========================
+        log(f"[DOWNLOAD-START] {symbol}: downloading 180d/1d data")
+
+        df_mid = yf.download(symbol, period="180d", interval="1d")
+
+        if df_mid is None or df_mid.empty:
+            log(f"[DOWNLOAD-WARN] {symbol}: no mid-term data returned")
+
+            # 中期データが無い場合は None を入れておく
+            ema50_mid = None
+            slope_ema50_mid = None
+            drop_rate_mid = None
+            reversal_rate_mid = None
+            reversal_strength_mid = None
+
+        else:
+            log(f"[DOWNLOAD-END] {symbol}: {len(df_mid)} rows downloaded")
+
+            # --- 中期 EMA ---
+            df_mid["EMA50_mid"] = ema(df_mid["Close"], 50)
+
+            ema50_mid = safe_float(df_mid["EMA50_mid"].iloc[-1])
+            ema50_mid_prev = safe_float(df_mid["EMA50_mid"].iloc[-5])
+            slope_ema50_mid = safe_float(ema50_mid - ema50_mid_prev)
+
+            # --- 中期の反転強度（半年） ---
+            recent_mid = df_mid.tail(120)
+            peak_mid = safe_float(recent_mid["High"].max())
+            bottom_mid = safe_float(recent_mid["Low"].min())
+
+            drop_rate_mid = safe_float((bottom_mid / peak_mid - 1) * 100) if peak_mid else None
+            reversal_rate_mid = safe_float((ema50_mid / bottom_mid - 1) * 100) if bottom_mid else None
+
+            if drop_rate_mid and drop_rate_mid != 0:
+                reversal_strength_mid = safe_float(reversal_rate_mid / abs(drop_rate_mid))
+            else:
+                reversal_strength_mid = None
+
+        # =========================
+        # ③ screening_conditions（短期のみ）
+        # =========================
         if not screening_conditions(
             market_cap, close_price,
             drop_rate, reversal_rate, reversal_strength,
@@ -261,7 +306,9 @@ def process_symbol(symbol, company_name, market, log):
             log(f"[FILTER] {symbol}: screening_conditions NG")
             return None
 
-        # --- スコア ---
+        # =========================
+        # ④ スコア（短期）
+        # =========================
         score = calc_score(
             drop_rate,
             reversal_rate,
@@ -273,7 +320,9 @@ def process_symbol(symbol, company_name, market, log):
             atr
         )
 
-        # --- GPT スコア ---
+        # =========================
+        # ⑤ GPT スコア（短期）
+        # =========================
         gpt = gpt_score(
             symbol, company_name, close_price, market_cap,
             drop_rate, reversal_rate, reversal_strength,
@@ -281,11 +330,16 @@ def process_symbol(symbol, company_name, market, log):
             atr, volume, vol_ma20, volume_ratio
         )
 
+        # =========================
+        # ⑥ 結果まとめ（短期＋中期）
+        # =========================
         return {
             "symbol": symbol,
             "company_name": company_name,
             "market": market,
             "close": close_price,
+
+            # --- 短期 ---
             "EMA20": ema20,
             "EMA50": ema50,
             "ATR": atr,
@@ -295,6 +349,15 @@ def process_symbol(symbol, company_name, market, log):
             "market_cap": market_cap,
             "slope_ema20": slope_ema20,
             "volume_ratio": volume_ratio,
+
+            # --- 中期（半年） ---
+            "ema50_mid": ema50_mid,
+            "slope_ema50_mid": slope_ema50_mid,
+            "drop_rate_mid": drop_rate_mid,
+            "reversal_rate_mid": reversal_rate_mid,
+            "reversal_strength_mid": reversal_strength_mid,
+
+            # --- スコア ---
             "score": score,
             "gpt_score": gpt.get("score"),
             "gpt_judgement": gpt.get("judgement"),
@@ -304,6 +367,7 @@ def process_symbol(symbol, company_name, market, log):
     except Exception as e:
         log(f"[ERROR] {symbol}: {e}")
         return None
+
 
 # =========================
 # メイン関数（screening ひとつだけ）
@@ -453,7 +517,12 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
                 f"EMA50={r.get('EMA50')}, "
                 f"slope_ema20={r.get('slope_ema20')}, "
                 f"ATR={r.get('ATR')}, "
-                f"volume_ratio={r.get('volume_ratio')}\n"
+                f"volume_ratio={r.get('volume_ratio')}\n",
+                f"ema50_mid={r.get('ema50_mid')}, "
+                f"slope_ema50_mid={r.get('slope_ema50_mid')}, "
+                f"drop_rate_mid={r.get('drop_rate_mid')}, "
+                f"reversal_rate_mid={r.get('reversal_rate_mid')}, "
+                f"reversal_strength_mid={r.get('reversal_strength_mid')} "
             )
 
         prompt = f"""
@@ -481,6 +550,12 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
 　- 割安性（下落率・反転率）
 　- トレンド（EMA20/EMA50）
 ・同じ観点を複数銘柄で使ってはならない
+・短期指標に加えて、中期（半年）の勢いも評価すること：
+  - ema50_mid, slope_ema50_mid
+  - drop_rate_mid, reversal_strength_mid
+・短期と中期の勢いが一致している銘柄は高く評価すること
+・短期は強いが中期は弱い銘柄、中期は強いが短期は弱い銘柄など、
+  時間軸のギャップも理由に含めること
 
 【順位ごとの役割分担】
 1位：最も強い攻めの理由（勢い・優位性）
