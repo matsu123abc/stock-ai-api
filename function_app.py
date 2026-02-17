@@ -504,26 +504,24 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         # --- GPT に渡す比較しやすい形式 ---
-        items_text = ""
-        for r in results:
-            items_text += (
-                f"{r.get('symbol')} ({r.get('company_name')}): "
-                f"score={r.get('score')}, "
-                f"gpt_score={r.get('gpt_score')}, "
-                f"drop_rate={r.get('drop_rate')}, "
-                f"reversal_rate={r.get('reversal_rate')}, "
-                f"reversal_strength={r.get('reversal_strength')}, "
-                f"EMA20={r.get('EMA20')}, "
-                f"EMA50={r.get('EMA50')}, "
-                f"slope_ema20={r.get('slope_ema20')}, "
-                f"ATR={r.get('ATR')}, "
-                f"volume_ratio={r.get('volume_ratio')}\n",
-                f"ema50_mid={r.get('ema50_mid')}, "
-                f"slope_ema50_mid={r.get('slope_ema50_mid')}, "
-                f"drop_rate_mid={r.get('drop_rate_mid')}, "
-                f"reversal_rate_mid={r.get('reversal_rate_mid')}, "
-                f"reversal_strength_mid={r.get('reversal_strength_mid')} "
-            )
+        items_text += (
+            f"{r.get('symbol')} ({r.get('company_name')}): "
+            f"score={r.get('score')}, "
+            f"gpt_score={r.get('gpt_score')}, "
+            f"drop_rate={r.get('drop_rate')}, "
+            f"reversal_rate={r.get('reversal_rate')}, "
+            f"reversal_strength={r.get('reversal_strength')}, "
+            f"EMA20={r.get('EMA20')}, "
+            f"EMA50={r.get('EMA50')}, "
+            f"slope_ema20={r.get('slope_ema20')}, "
+            f"ATR={r.get('ATR')}, "
+            f"volume_ratio={r.get('volume_ratio')}, "
+            f"ema50_mid={r.get('ema50_mid')}, "
+            f"slope_ema50_mid={r.get('slope_ema50_mid')}, "
+            f"drop_rate_mid={r.get('drop_rate_mid')}, "
+            f"reversal_rate_mid={r.get('reversal_rate_mid')}, "
+            f"reversal_strength_mid={r.get('reversal_strength_mid')}\n"
+        )
 
         prompt = f"""
 あなたは短期トレードの専門家です。
