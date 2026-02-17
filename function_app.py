@@ -504,26 +504,26 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         # --- GPT に渡す比較しやすい形式 ---
-        items_text += (
-            f"{r.get('symbol')} ({r.get('company_name')}): "
-            f"score={r.get('score')}, "
-            f"gpt_score={r.get('gpt_score')}, "
-            f"drop_rate={r.get('drop_rate')}, "
-            f"reversal_rate={r.get('reversal_rate')}, "
-            f"reversal_strength={r.get('reversal_strength')}, "
-            f"EMA20={r.get('EMA20')}, "
-            f"EMA50={r.get('EMA50')}, "
-            f"slope_ema20={r.get('slope_ema20')}, "
-            f"ATR={r.get('ATR')}, "
-            f"volume_ratio={r.get('volume_ratio')}, "
-            f"ema50_mid={r.get('ema50_mid')}, "
-            f"slope_ema50_mid={r.get('slope_ema50_mid')}, "
-            f"drop_rate_mid={r.get('drop_rate_mid')}, "
-            f"reversal_rate_mid={r.get('reversal_rate_mid')}, "
-            f"reversal_strength_mid={r.get('reversal_strength_mid')}"
-            "\n"
-        )
+        items_text = ""
+        for r in results:
+            items_text += f"{r.get('symbol')} ({r.get('company_name')}): "
+            items_text += f"score={r.get('score')}, "
+            items_text += f"gpt_score={r.get('gpt_score')}, "
+            items_text += f"drop_rate={r.get('drop_rate')}, "
+            items_text += f"reversal_rate={r.get('reversal_rate')}, "
+            items_text += f"reversal_strength={r.get('reversal_strength')}, "
+            items_text += f"EMA20={r.get('EMA20')}, "
+            items_text += f"EMA50={r.get('EMA50')}, "
+            items_text += f"slope_ema20={r.get('slope_ema20')}, "
+            items_text += f"ATR={r.get('ATR')}, "
+            items_text += f"volume_ratio={r.get('volume_ratio')}, "
+            items_text += f"ema50_mid={r.get('ema50_mid')}, "
+            items_text += f"slope_ema50_mid={r.get('slope_ema50_mid')}, "
+            items_text += f"drop_rate_mid={r.get('drop_rate_mid')}, "
+            items_text += f"reversal_rate_mid={r.get('reversal_rate_mid')}, "
+            items_text += f"reversal_strength_mid={r.get('reversal_strength_mid')}\n"
 
+        # --- GPT プロンプト ---
         prompt = f"""
 あなたは短期トレードの専門家です。
 
@@ -578,14 +578,17 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
       "note": "100文字以内"
     }},
     {{
-      "rank": 2, ... }},
+      "rank": 2
+    }},
     {{
-      "rank": 3, ... }}
+      "rank": 3
+    }}
   ]
 }}
 前後に説明文は書かず、JSON のみを返してください。
 """
 
+        # --- GPT 呼び出し ---
         res = client.chat.completions.create(
             model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
             messages=[{"role": "user", "content": prompt}],
