@@ -439,46 +439,46 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
         )
 
-        # --- GPT に渡す銘柄情報を詳細化 ---
+        # --- GPT に渡す比較しやすい形式を作成 ---
         items_text = ""
         for r in results:
             items_text += (
-                f"symbol: {r.get('symbol')}, "
-                f"company: {r.get('company_name')}, "
-                f"score: {r.get('score')}, "
-                f"gpt_score: {r.get('gpt_score')}, "
-                f"judgement: {r.get('gpt_judgement')}, "
-                f"drop_rate: {r.get('drop_rate')}, "
-                f"reversal_rate: {r.get('reversal_rate')}, "
-                f"reversal_strength: {r.get('reversal_strength')}, "
-                f"EMA20: {r.get('EMA20')}, "
-                f"EMA50: {r.get('EMA50')}, "
-                f"slope_ema20: {r.get('slope_ema20')}, "
-                f"ATR: {r.get('ATR')}, "
-                f"volume_ratio: {r.get('volume_ratio')}, "
-                f"comment: {r.get('gpt_comment')}\n"
+                f"{r.get('symbol')} ({r.get('company_name')}): "
+                f"score={r.get('score')}, "
+                f"gpt_score={r.get('gpt_score')}, "
+                f"drop_rate={r.get('drop_rate')}, "
+                f"reversal_rate={r.get('reversal_rate')}, "
+                f"reversal_strength={r.get('reversal_strength')}, "
+                f"EMA20={r.get('EMA20')}, "
+                f"EMA50={r.get('EMA50')}, "
+                f"slope_ema20={r.get('slope_ema20')}, "
+                f"ATR={r.get('ATR')}, "
+                f"volume_ratio={r.get('volume_ratio')}\n"
             )
 
         prompt = f"""
 あなたは短期トレードの専門家です。
-以下の銘柄リストから、短期トレードの観点で「買い候補トップ3」を選び、
-JSON 形式で出力してください。
 
-【銘柄リスト】
+以下の銘柄データを比較し、
+「買い候補トップ3」を選び、JSON 形式で出力してください。
+
+【銘柄データ（比較用）】
 {items_text}
 
-【評価基準】
+【評価基準（比較を必須とする）】
 1. 反転強度（最重要）
-2. EMA20 と EMA50 の位置関係
-3. 出来高急増率
-4. ATR（リスク）
-5. GPT コメントの内容
+2. 出来高急増率（volume_ratio）
+3. ATR（リスクの低さ）
+4. EMA20 と EMA50 の位置関係
+5. EMA20 の傾き（slope_ema20）
 6. score と gpt_score の総合点
 
-【文章ルール】
-・3銘柄の理由は、必ず異なる観点で書くこと
-・同じ表現や文章構造を繰り返さないこと
-・各銘柄の強み・弱みを、他銘柄と比較しながら書くこと
+【文章ルール（差別化を強制）】
+・各銘柄の理由は、必ず「他銘柄との比較」で書くこと
+・同じ観点を繰り返さないこと
+・1位は最も優位性が高い理由を書く
+・2位は1位との違いを明確にする
+・3位はリスクを踏まえた上での相対的な魅力を書く
 ・理由は200文字以内、リスクと注意点は100文字以内
 
 【出力フォーマット（JSON のみ）】
@@ -488,7 +488,7 @@ JSON 形式で出力してください。
       "rank": 1,
       "symbol": "XXXX.T",
       "company": "銘柄名",
-      "reason": "200文字以内",
+      "reason": "200文字以内（比較ベース）",
       "risk": "100文字以内",
       "note": "100文字以内"
     }},
