@@ -163,6 +163,147 @@ JSON形式:
             "comment": f"GPTエラー: {str(e)}"
         }
 
+def screening_conditions(
+    market_cap, price,
+    drop_rate, reversal_rate, reversal_strength,
+    ema20, ema50
+):
+    # --- 基本条件 ---
+    if market_cap is None or market_cap < 300:
+        return False
+    if price is None or price < 300:
+        return False
+
+    # --- 高値→安値→反転パターン ---
+    if drop_rate is None or drop_rate > -10:
+        return False
+    if reversal_rate is None or reversal_rate < 4:
+        return False
+
+    # --- 反転強度 < 1 ---
+    if reversal_strength is None or reversal_strength >= 1:
+        return False
+
+    # --- EMA20 > EMA50 ---
+    if ema20 is None or ema50 is None or ema20 <= ema50:
+        return False
+
+    return True
+
+def process_symbol(symbol, company_name, market, log):
+    try:
+        log(f"[DOWNLOAD-START] {symbol}: downloading 90d/1h data")
+
+        df = yf.download(symbol, period="90d", interval="1h")
+
+        if df is None or df.empty:
+            log(f"[DOWNLOAD-WARN] {symbol}: no data returned")
+            return None
+
+        log(f"[DOWNLOAD-END] {symbol}: {len(df)} rows downloaded")
+
+        # --- 時価総額 ---
+        try:
+            ticker = yf.Ticker(symbol)
+            fi = getattr(ticker, "fast_info", None)
+            mc = None
+
+            if fi is not None:
+                mc = fi.get("market_cap", None)
+
+            if mc is None:
+                info = ticker.info
+                mc = info.get("marketCap", None)
+
+            market_cap = int(mc / 100000000) if mc else None
+        except:
+            market_cap = None
+
+        # --- インジケータ ---
+        df["EMA20"] = ema(df["Close"], 20)
+        df["EMA50"] = ema(df["Close"], 50)
+        df["ATR"] = calc_atr(df)
+        df["vol_ma20"] = df["Volume"].rolling(window=20).mean()
+
+        latest = df.iloc[-1]
+
+        close_price = safe_float(latest["Close"])
+        ema20 = safe_float(latest["EMA20"])
+        ema50 = safe_float(latest["EMA50"])
+        atr = safe_float(latest["ATR"])
+
+        ema20_prev = safe_float(df["EMA20"].iloc[-5])
+        slope_ema20 = safe_float(ema20 - ema20_prev)
+
+        vol_ma20 = safe_float(latest["vol_ma20"])
+        volume = safe_float(latest["Volume"])
+        volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
+
+        # --- 反転強度 ---
+        recent = df.tail(120)
+        peak_price = safe_float(recent["High"].max())
+        bottom_price = safe_float(recent["Low"].min())
+
+        drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
+        reversal_rate = safe_float((close_price / bottom_price - 1) * 100) if bottom_price else None
+
+        if drop_rate and drop_rate != 0:
+            reversal_strength = safe_float(reversal_rate / abs(drop_rate))
+        else:
+            reversal_strength = None
+
+        # --- screening_conditions（反転特化） ---
+        if not screening_conditions(
+            market_cap, close_price,
+            drop_rate, reversal_rate, reversal_strength,
+            ema20, ema50
+        ):
+            log(f"[FILTER] {symbol}: screening_conditions NG")
+            return None
+
+        # --- スコア ---
+        score = calc_score(
+            drop_rate,
+            reversal_rate,
+            reversal_strength,
+            ema20,
+            ema50,
+            slope_ema20,
+            volume_ratio,
+            atr
+        )
+
+        # --- GPT スコア ---
+        gpt = gpt_score(
+            symbol, company_name, close_price, market_cap,
+            drop_rate, reversal_rate, reversal_strength,
+            ema20, ema50, slope_ema20,
+            atr, volume, vol_ma20, volume_ratio
+        )
+
+        return {
+            "symbol": symbol,
+            "company_name": company_name,
+            "market": market,
+            "close": close_price,
+            "EMA20": ema20,
+            "EMA50": ema50,
+            "ATR": atr,
+            "drop_rate": drop_rate,
+            "reversal_rate": reversal_rate,
+            "reversal_strength": reversal_strength,
+            "market_cap": market_cap,
+            "slope_ema20": slope_ema20,
+            "volume_ratio": volume_ratio,
+            "score": score,
+            "gpt_score": gpt.get("score"),
+            "gpt_judgement": gpt.get("judgement"),
+            "gpt_comment": gpt.get("comment")
+        }
+
+    except Exception as e:
+        log(f"[ERROR] {symbol}: {e}")
+        return None
 
 # =========================
 # メイン関数（screening ひとつだけ）
@@ -250,115 +391,11 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             company_name = name_dict.get(code, "不明")
             market = market_dict.get(code, "不明")
 
-            try:
-                # --- 株価データ取得開始 ---
-                log(f"[DOWNLOAD-START] {symbol}: downloading 90d/1h data")
+            result = process_symbol(symbol, company_name, market, log)
 
-                df = yf.download(symbol, period="90d", interval="1h")
+            if result is not None:
+                results.append(result)
 
-                # --- データが空の場合 ---
-                if df is None or df.empty:
-                    log(f"[DOWNLOAD-WARN] {symbol}: no data returned")
-                    results.append({"symbol": symbol, "error": "株価データ取得失敗"})
-                    continue
-
-                # --- 正常取得 ---
-                log(f"[DOWNLOAD-END] {symbol}: {len(df)} rows downloaded")
-
-                # --- 時価総額 ---
-                try:
-                    ticker = yf.Ticker(symbol)
-                    fi = getattr(ticker, "fast_info", None)
-                    mc = None
-
-                    if fi is not None:
-                        mc = fi.get("market_cap", None)
-
-                    if mc is None:
-                        info = ticker.info
-                        mc = info.get("marketCap", None)
-
-                    market_cap = int(mc / 100000000) if mc else None
-                except:
-                    market_cap = None
-
-                # --- インジケータ ---
-                df["EMA20"] = ema(df["Close"], 20)
-                df["EMA50"] = ema(df["Close"], 50)
-                df["ATR"] = calc_atr(df)
-                df["vol_ma20"] = df["Volume"].rolling(window=20).mean()
-
-                latest = df.iloc[-1]
-
-                close_price = safe_float(latest["Close"])
-                ema20 = safe_float(latest["EMA20"])
-                ema50 = safe_float(latest["EMA50"])
-                atr = safe_float(latest["ATR"])
-
-                ema20_prev = safe_float(df["EMA20"].iloc[-5])
-                slope_ema20 = safe_float(ema20 - ema20_prev)
-
-                vol_ma20 = safe_float(latest["vol_ma20"])
-                volume = safe_float(latest["Volume"])
-                volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
-
-                # --- 反転強度 ---
-                recent = df.tail(120)
-                peak_price = safe_float(recent["High"].max())
-                bottom_price = safe_float(recent["Low"].min())
-
-                drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
-                reversal_rate = safe_float((close_price / bottom_price - 1) * 100) if bottom_price else None
-
-                if drop_rate and drop_rate != 0:
-                    reversal_strength = safe_float(reversal_rate / abs(drop_rate))
-                else:
-                    reversal_strength = None
-
-                # --- スコア ---
-                score = calc_score(
-                    drop_rate,
-                    reversal_rate,
-                    reversal_strength,
-                    ema20,
-                    ema50,
-                    slope_ema20,
-                    volume_ratio,
-                    atr
-                )
-
-                # --- GPT スコア ---
-                gpt = gpt_score(
-                    symbol, company_name, close_price, market_cap,
-                    drop_rate, reversal_rate, reversal_strength,
-                    ema20, ema50, slope_ema20,
-                    atr, volume, vol_ma20, volume_ratio
-                )
-
-                results.append({
-                    "symbol": symbol,
-                    "company_name": company_name,
-                    "market": market,
-                    "close": close_price,
-                    "EMA20": ema20,
-                    "EMA50": ema50,
-                    "ATR": atr,
-                    "drop_rate": drop_rate,
-                    "reversal_rate": reversal_rate,
-                    "reversal_strength": reversal_strength,
-                    "market_cap": market_cap,
-                    "slope_ema20": slope_ema20,
-                    "volume_ratio": volume_ratio,
-                    "score": score,
-                    "gpt_score": gpt.get("score"),
-                    "gpt_judgement": gpt.get("judgement"),
-                    "gpt_comment": gpt.get("comment")
-                })
-
-            except Exception as e:
-                log(f"[DOWNLOAD-ERROR] {symbol}: Failed to download data: {e}")
-                results.append({"symbol": symbol, "error": "株価データ取得エラー"})
-                continue
 
         # --- JSON 保存 ---
         result_prefix = os.getenv("RESULT_PREFIX", "results")
