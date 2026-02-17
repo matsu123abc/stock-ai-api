@@ -427,7 +427,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 # AI 買い候補ランキング生成
 # =========================
 @app.function_name(name="ranking")
-@app.route(route="ranking", methods=["POST"], auth_level="anonymous")
+@app.route(route="ranking", methods=["POST"], auth_level="anonymous"])
 def ranking(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
@@ -473,13 +473,24 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
 5. EMA20 の傾き（slope_ema20）
 6. score と gpt_score の総合点
 
-【文章ルール（差別化を強制）】
-・1位は「最も強い攻めの理由」を書く（勢い・強さ・優位性）
-・2位は「強みと弱みのバランス型理由」を書く（比較して中間的）
-・3位は「リスクはあるが条件次第で狙える理由」を書く（弱点を踏まえた魅力）
-・3銘柄の理由は、必ず異なる観点で書くこと
+【観点割り当てルール（最重要）】
+・3銘柄の理由は、必ず異なる観点を使うこと
+・以下の観点から「その銘柄に最も適した1つだけ」を選んで理由を書くこと
+　- 勢い（反転強度・EMA傾き）
+　- 安定性（ATR・出来高）
+　- 割安性（下落率・反転率）
+　- トレンド（EMA20/EMA50）
+・同じ観点を複数銘柄で使ってはならない
+
+【順位ごとの役割分担】
+1位：最も強い攻めの理由（勢い・優位性）
+2位：強みと弱みのバランス型理由
+3位：リスクを踏まえた上で条件次第で狙える理由
+
+【文章ルール】
+・理由は200文字以内
+・リスクと注意点は100文字以内
 ・同じ表現や文章構造を繰り返さないこと
-・理由は200文字以内、リスクと注意点は100文字以内
 
 【出力フォーマット（JSON のみ）】
 {{
@@ -488,26 +499,14 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
       "rank": 1,
       "symbol": "XXXX.T",
       "company": "銘柄名",
-      "reason": "200文字以内（攻めの理由）",
+      "reason": "200文字以内（観点1つ）",
       "risk": "100文字以内",
       "note": "100文字以内"
     }},
     {{
-      "rank": 2,
-      "symbol": "...",
-      "company": "...",
-      "reason": "200文字以内（バランス型理由）",
-      "risk": "100文字以内",
-      "note": "100文字以内"
-    }},
+      "rank": 2, ... }},
     {{
-      "rank": 3,
-      "symbol": "...",
-      "company": "...",
-      "reason": "200文字以内（条件次第で狙える理由）",
-      "risk": "100文字以内",
-      "note": "100文字以内"
-    }}
+      "rank": 3, ... }}
   ]
 }}
 前後に説明文は書かず、JSON のみを返してください。
