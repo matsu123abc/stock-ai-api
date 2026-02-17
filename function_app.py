@@ -503,27 +503,40 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
         )
 
+        # --- SCORE 計算（短期 & 中期） ---
+        for r in results:
+            # 短期スコア（short_score）
+            r["short_score"] = (
+                (r.get("reversal_strength") or 0) * 0.4 +
+                (r.get("volume_ratio") or 0) * 0.2 +
+                (r.get("slope_ema20") or 0) * 0.2 +
+                (r.get("drop_rate") or 0) * 0.1 -
+                (r.get("ATR") or 0) * 0.1
+            )
+
+            # 中期スコア（mid_score）
+            r["mid_score"] = (
+                (r.get("reversal_strength_mid") or 0) * 0.5 +
+                (r.get("slope_ema50_mid") or 0) * 0.3 +
+                (r.get("drop_rate_mid") or 0) * 0.2
+            )
+
         # --- GPT に渡す比較しやすい形式 ---
         items_text = ""
         for r in results:
             items_text += f"{r.get('symbol')} ({r.get('company_name')}): "
-            items_text += f"score={r.get('score')}, "
-            items_text += f"gpt_score={r.get('gpt_score')}, "
-            items_text += f"drop_rate={r.get('drop_rate')}, "
-            items_text += f"reversal_rate={r.get('reversal_rate')}, "
+            items_text += f"short_score={r.get('short_score'):.2f}, "
+            items_text += f"mid_score={r.get('mid_score'):.2f}, "
             items_text += f"reversal_strength={r.get('reversal_strength')}, "
-            items_text += f"EMA20={r.get('EMA20')}, "
-            items_text += f"EMA50={r.get('EMA50')}, "
+            items_text += f"reversal_strength_mid={r.get('reversal_strength_mid')}, "
             items_text += f"slope_ema20={r.get('slope_ema20')}, "
-            items_text += f"ATR={r.get('ATR')}, "
-            items_text += f"volume_ratio={r.get('volume_ratio')}, "
-            items_text += f"ema50_mid={r.get('ema50_mid')}, "
             items_text += f"slope_ema50_mid={r.get('slope_ema50_mid')}, "
+            items_text += f"drop_rate={r.get('drop_rate')}, "
             items_text += f"drop_rate_mid={r.get('drop_rate_mid')}, "
-            items_text += f"reversal_rate_mid={r.get('reversal_rate_mid')}, "
-            items_text += f"reversal_strength_mid={r.get('reversal_strength_mid')}\n"
+            items_text += f"volume_ratio={r.get('volume_ratio')}, "
+            items_text += f"ATR={r.get('ATR')}\n"
 
-        # --- GPT プロンプト ---
+        # --- GPT プロンプト（短期 × 中期 SCORE 最適化版） ---
         prompt = f"""
 あなたは短期トレードの専門家です。
 
@@ -534,44 +547,34 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
 {items_text}
 
 【評価基準】
-1. 反転強度（最重要）
-2. 出来高急増率（volume_ratio）
-3. ATR（リスクの低さ）
-4. EMA20 と EMA50 の位置関係
-5. EMA20 の傾き（slope_ema20）
-6. score と gpt_score の総合点
-7. 中期（半年）の勢いと短期の整合性
+1. 短期SCORE（short_score）
+2. 中期SCORE（mid_score）
+3. 反転強度（短期・中期）
+4. 出来高急増率（volume_ratio）
+5. ATR（リスクの低さ）
+6. EMA20/EMA50 と EMA50_mid の整合性
 
 【短期 × 中期の評価ルール】
-・短期（90日）と中期（半年）の EMA50 の傾きが一致している銘柄は強く評価すること
-・短期は上昇だが中期が下降している銘柄は「反転初動」として扱うこと
-・短期が弱く中期が強い銘柄は「押し目の可能性」として扱うこと
-・短期と中期の反転強度の差が大きい場合、その理由を明確に説明すること
-・短期の反転が中期より早い場合は「短期先行型」
-・中期の反転が短期より強い場合は「中期主導型」
-・EMA20/EMA50（短期）と EMA50_mid（中期）の位置関係からトレンドの一貫性を評価すること
+・短期と中期の傾きが一致している銘柄は強く評価する
+・短期が強く中期が弱い場合は「短期先行型」
+・中期が強く短期が弱い場合は「中期主導型」
+・反転強度の差が大きい場合は理由に含める
+・EMA20/EMA50 と EMA50_mid の整合性を評価する
 
-【観点割り当てルール（最重要）】
-・3銘柄の理由は、必ず異なる観点を使うこと
-・以下の観点から「その銘柄に最も適した1つだけ」を選んで理由を書くこと
+【観点割り当てルール】
+・3銘柄の理由は必ず異なる観点を使うこと
 　- 勢い（反転強度・EMA傾き）
 　- 安定性（ATR・出来高）
-　- 割安性（下落率・反転率）
-    - トレンド（EMA20/EMA50）
+　- 割安性（下落率）
+　- トレンド（EMA20/EMA50）
 ・同じ観点を複数銘柄で使ってはならない
 
-【理由の書き方ルール】
-・短期と中期の勢いの違いを必ず1文含めること
-・短期と中期のどちらが主導しているかを明確にすること
-・時間軸の整合性（同方向）か、乖離（逆方向）かを説明すること
+【理由の書き方】
+・短期と中期の勢いの違いを必ず1文含める
+・どちらが主導しているかを明確にする
+・時間軸の整合性（同方向 or 乖離）を説明する
 ・理由は200文字以内
 ・リスクと注意点は100文字以内
-・同じ表現や文章構造を繰り返さないこと
-
-【順位ごとの役割分担】
-1位：最も強い攻めの理由（勢い・優位性）
-2位：強みと弱みのバランス型理由
-3位：リスクを踏まえた上で条件次第で狙える理由
 
 【出力フォーマット（JSON のみ）】
 {{
