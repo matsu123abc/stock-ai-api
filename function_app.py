@@ -213,6 +213,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             try:
                 # --- 株価データ取得 ---
                 df = yf.download(symbol, period="90d", interval="1h")
+                logging.info(f"[DOWNLOAD] {symbol}: {len(df)} rows downloaded")
                 if df is None or df.empty:
                     results.append({"symbol": symbol, "error": "株価データ取得失敗"})
                     continue
@@ -308,6 +309,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
                 })
 
             except Exception as e:
+                logging.error(f"[ERROR] {symbol}: Failed to download data: {e}")
                 results.append({"symbol": symbol, "error": str(e)})
 
         # --- JSON 保存 ---
