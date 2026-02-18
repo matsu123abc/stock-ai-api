@@ -358,7 +358,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         # ② 結果保存先コンテナ
         result_container = os.getenv("RESULT_CONTAINER")
 
-        # ③ ログファイル名
+        # ③ ログ初期化（前回分を削除）
         today = datetime.now().strftime("%Y-%m-%d")
         log_blob_name = f"logs/{today}/screening.log"
 
@@ -367,22 +367,31 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             blob=log_blob_name
         )
 
-        # ④ append blob として初期化（存在しなければ作成）
+        # 空で上書き（存在しなくても OK）
         try:
-            log_blob.create_append_blob()
-            logging.info("[LOG] append blob created")
-        except Exception:
-            logging.info("[LOG] append blob already exists")
+            log_blob.upload_blob("", overwrite=True)
+            logging.info("[LOG] previous log cleared")
+        except Exception as e:
+            logging.error(f"[LOG-ERROR] failed to clear log: {e}")
 
-        # ⑤ log() を定義（append_block で追記）
+        # ④ log() を定義（ここから追記が始まる）
         def log(msg):
             logs.append(msg)
             logging.info(msg)
 
             try:
-                log_blob.append_block((msg + "\n").encode("utf-8"))
+                # 既存ログを取得（なければ空）
+                try:
+                    old = log_blob.download_blob().readall().decode("utf-8")
+                except:
+                    old = ""
+
+                # 新しいログを追記
+                new_text = old + msg + "\n"
+                log_blob.upload_blob(new_text, overwrite=True)
+
             except Exception as e:
-                logging.error(f"[LOG-ERROR] Failed to append log: {e}")
+                logging.error(f"[LOG-ERROR] Failed to write log to blob: {e}")
 
         # --- UI から送られた CSV のファイル名を取得 ---
         csv_filename = req.headers.get("X-Filename", "uploaded.csv")
@@ -421,6 +430,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             if result is not None:
                 results.append(result)
 
+
         # --- JSON 保存 ---
         result_prefix = os.getenv("RESULT_PREFIX", "results")
         today = datetime.now().strftime("%Y-%m-%d")
@@ -446,7 +456,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
-
+    
 # =========================
 # AI 買い候補ランキング生成
 # =========================
