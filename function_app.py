@@ -351,6 +351,8 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
     logs = []
 
     try:
+        import time  # ← sleep 用
+
         # ① Blob 接続（最優先）
         connect_str = os.getenv("AzureWebJobsStorage")
         blob_service = BlobServiceClient.from_connection_string(connect_str)
@@ -421,6 +423,9 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         # スクリーニングロジック
         # =========================
         for code in df_csv["コード"]:
+
+            time.sleep(0.2)  # ← ★ 追加：処理間隔（安定化の要）
+
             symbol = f"{code}.T"
             company_name = name_dict.get(code, "不明")
             market = market_dict.get(code, "不明")
@@ -429,7 +434,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
             if result is not None:
                 results.append(result)
-
 
         # --- JSON 保存 ---
         result_prefix = os.getenv("RESULT_PREFIX", "results")
@@ -456,7 +460,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
-    
+
 # =========================
 # AI 買い候補ランキング生成
 # =========================
