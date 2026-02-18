@@ -193,14 +193,14 @@ def screening_conditions(
 def process_symbol(symbol, company_name, market, log):
     try:
         # =========================
-        # ① 短期データ（90日・1時間足）
+        # ① 日足データ（180日・1d）
         # =========================
-        log(f"[DOWNLOAD-START] {symbol}: downloading 90d/1h data")
+        log(f"[DOWNLOAD-START] {symbol}: downloading 180d/1d data")
 
-        df = yf.download(symbol, period="90d", interval="1h")
+        df = yf.download(symbol, period="180d", interval="1d")
 
         if df is None or df.empty:
-            log(f"[DOWNLOAD-WARN] {symbol}: no data returned")
+            log(f"[DOWNLOAD-WARN] {symbol}: no daily data returned")
             return None
 
         log(f"[DOWNLOAD-END] {symbol}: {len(df)} rows downloaded")
@@ -222,7 +222,9 @@ def process_symbol(symbol, company_name, market, log):
         except:
             market_cap = None
 
-        # --- 短期インジケータ ---
+        # =========================
+        # ② 日足インジケータ計算
+        # =========================
         df["EMA20"] = ema(df["Close"], 20)
         df["EMA50"] = ema(df["Close"], 50)
         df["ATR"] = calc_atr(df)
@@ -235,14 +237,18 @@ def process_symbol(symbol, company_name, market, log):
         ema50 = safe_float(latest["EMA50"])
         atr = safe_float(latest["ATR"])
 
+        # EMA20 の傾き（5日前との差）
         ema20_prev = safe_float(df["EMA20"].iloc[-5])
         slope_ema20 = safe_float(ema20 - ema20_prev)
 
+        # 出来高
         vol_ma20 = safe_float(latest["vol_ma20"])
         volume = safe_float(latest["Volume"])
         volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
 
-        # --- 短期の反転強度 ---
+        # =========================
+        # ③ 反転パターン（日足ベース）
+        # =========================
         recent = df.tail(120)
         peak_price = safe_float(recent["High"].max())
         bottom_price = safe_float(recent["Low"].min())
@@ -256,44 +262,7 @@ def process_symbol(symbol, company_name, market, log):
             reversal_strength = None
 
         # =========================
-        # ② 中期データ（180日・日足）
-        # =========================
-        log(f"[DOWNLOAD-START] {symbol}: downloading 180d/1d data")
-
-        df_mid = yf.download(symbol, period="180d", interval="1d")
-
-        if df_mid is None or df_mid.empty:
-            log(f"[DOWNLOAD-WARN] {symbol}: no mid-term data returned")
-
-            ema50_mid = None
-            slope_ema50_mid = None
-            drop_rate_mid = None
-            reversal_rate_mid = None
-            reversal_strength_mid = None
-
-        else:
-            log(f"[DOWNLOAD-END] {symbol}: {len(df_mid)} rows downloaded")
-
-            df_mid["EMA50_mid"] = ema(df_mid["Close"], 50)
-
-            ema50_mid = safe_float(df_mid["EMA50_mid"].iloc[-1])
-            ema50_mid_prev = safe_float(df_mid["EMA50_mid"].iloc[-5])
-            slope_ema50_mid = safe_float(ema50_mid - ema50_mid_prev)
-
-            recent_mid = df_mid.tail(120)
-            peak_mid = safe_float(recent_mid["High"].max())
-            bottom_mid = safe_float(recent_mid["Low"].min())
-
-            drop_rate_mid = safe_float((bottom_mid / peak_mid - 1) * 100) if peak_mid else None
-            reversal_rate_mid = safe_float((ema50_mid / bottom_mid - 1) * 100) if bottom_mid else None
-
-            if drop_rate_mid and drop_rate_mid != 0:
-                reversal_strength_mid = safe_float(reversal_rate_mid / abs(drop_rate_mid))
-            else:
-                reversal_strength_mid = None
-
-        # =========================
-        # ③ screening_conditions（短期のみ）
+        # ④ screening_conditions（日足のみ）
         # =========================
         if not screening_conditions(
             market_cap, close_price,
@@ -304,31 +273,7 @@ def process_symbol(symbol, company_name, market, log):
             return None
 
         # =========================
-        # ④ スコア（短期）
-        # =========================
-        score = calc_score(
-            drop_rate,
-            reversal_rate,
-            reversal_strength,
-            ema20,
-            ema50,
-            slope_ema20,
-            volume_ratio,
-            atr
-        )
-
-        # =========================
-        # ⑤ GPT スコア（短期）
-        # =========================
-        gpt = gpt_score(
-            symbol, company_name, close_price, market_cap,
-            drop_rate, reversal_rate, reversal_strength,
-            ema20, ema50, slope_ema20,
-            atr, volume, vol_ma20, volume_ratio
-        )
-
-        # =========================
-        # ⑤-2 短期・中期スコア（short_score / mid_score）
+        # ⑤ スコア（日足のみ）
         # =========================
         short_score = (
             (reversal_strength or 0) * 0.4 +
@@ -338,14 +283,21 @@ def process_symbol(symbol, company_name, market, log):
             (atr or 0) * 0.1
         )
 
-        mid_score = (
-            (reversal_strength_mid or 0) * 0.5 +
-            (slope_ema50_mid or 0) * 0.3 +
-            (drop_rate_mid or 0) * 0.2
+        # 中期スコアは日足ベースに統一
+        mid_score = short_score
+
+        # =========================
+        # ⑥ GPT スコア（日足のみ）
+        # =========================
+        gpt = gpt_score(
+            symbol, company_name, close_price, market_cap,
+            drop_rate, reversal_rate, reversal_strength,
+            ema20, ema50, slope_ema20,
+            atr, volume, vol_ma20, volume_ratio
         )
 
         # =========================
-        # ⑥ 結果まとめ（短期＋中期）
+        # ⑦ 結果まとめ（UI 互換性維持）
         # =========================
         return {
             "symbol": symbol,
@@ -353,7 +305,7 @@ def process_symbol(symbol, company_name, market, log):
             "market": market,
             "close": close_price,
 
-            # --- 短期 ---
+            # --- 日足インジケータ ---
             "EMA20": ema20,
             "EMA50": ema50,
             "ATR": atr,
@@ -364,18 +316,18 @@ def process_symbol(symbol, company_name, market, log):
             "slope_ema20": slope_ema20,
             "volume_ratio": volume_ratio,
 
-            # --- 中期（半年） ---
-            "ema50_mid": ema50_mid,
-            "slope_ema50_mid": slope_ema50_mid,
-            "drop_rate_mid": drop_rate_mid,
-            "reversal_rate_mid": reversal_rate_mid,
-            "reversal_strength_mid": reversal_strength_mid,
+            # --- 中期（廃止 → 日足に統一） ---
+            "ema50_mid": ema50,
+            "slope_ema50_mid": slope_ema20,
+            "drop_rate_mid": drop_rate,
+            "reversal_rate_mid": reversal_rate,
+            "reversal_strength_mid": reversal_strength,
 
-            # --- スコア（短期・中期） ---
+            # --- スコア ---
             "short_score": short_score,
             "mid_score": mid_score,
 
-            # --- GPT（短期評価） ---
+            # --- GPT ---
             "gpt_score": gpt.get("score"),
             "gpt_judgement": gpt.get("judgement"),
             "gpt_comment": gpt.get("comment")
@@ -384,6 +336,7 @@ def process_symbol(symbol, company_name, market, log):
     except Exception as e:
         log(f"[ERROR] {symbol}: {e}")
         return None
+
 
 
 # =========================
