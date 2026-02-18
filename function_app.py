@@ -445,7 +445,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         # =========================
         for code in df_csv["コード"]:
 
-            time.sleep(0.5)  # ← ★ 安定化のための間隔
+            time.sleep(0.3)  # ← ★ 安定化のための間隔
 
             symbol = f"{code}.T"
             company_name = name_dict.get(code, "不明")
