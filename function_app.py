@@ -345,12 +345,6 @@ def process_symbol(symbol, company_name, market, log):
         )
 
         # =========================
-        # ★ 正規化（0〜100 にクリップ）
-        # =========================
-        short_score = max(min(short_score, 100), 0)
-        mid_score = max(min(mid_score, 100), 0)
-
-        # =========================
         # ⑥ 結果まとめ（短期＋中期）
         # =========================
         return {
