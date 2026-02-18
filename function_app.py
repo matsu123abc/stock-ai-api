@@ -265,7 +265,6 @@ def process_symbol(symbol, company_name, market, log):
         if df_mid is None or df_mid.empty:
             log(f"[DOWNLOAD-WARN] {symbol}: no mid-term data returned")
 
-            # 中期データが無い場合は None を入れておく
             ema50_mid = None
             slope_ema50_mid = None
             drop_rate_mid = None
@@ -275,14 +274,12 @@ def process_symbol(symbol, company_name, market, log):
         else:
             log(f"[DOWNLOAD-END] {symbol}: {len(df_mid)} rows downloaded")
 
-            # --- 中期 EMA ---
             df_mid["EMA50_mid"] = ema(df_mid["Close"], 50)
 
             ema50_mid = safe_float(df_mid["EMA50_mid"].iloc[-1])
             ema50_mid_prev = safe_float(df_mid["EMA50_mid"].iloc[-5])
             slope_ema50_mid = safe_float(ema50_mid - ema50_mid_prev)
 
-            # --- 中期の反転強度（半年） ---
             recent_mid = df_mid.tail(120)
             peak_mid = safe_float(recent_mid["High"].max())
             bottom_mid = safe_float(recent_mid["Low"].min())
@@ -331,6 +328,23 @@ def process_symbol(symbol, company_name, market, log):
         )
 
         # =========================
+        # ⑤-2 短期・中期スコア（short_score / mid_score）
+        # =========================
+        short_score = (
+            (reversal_strength or 0) * 0.4 +
+            (volume_ratio or 0) * 0.2 +
+            (slope_ema20 or 0) * 0.2 +
+            (drop_rate or 0) * 0.1 -
+            (atr or 0) * 0.1
+        )
+
+        mid_score = (
+            (reversal_strength_mid or 0) * 0.5 +
+            (slope_ema50_mid or 0) * 0.3 +
+            (drop_rate_mid or 0) * 0.2
+        )
+
+        # =========================
         # ⑥ 結果まとめ（短期＋中期）
         # =========================
         return {
@@ -357,8 +371,11 @@ def process_symbol(symbol, company_name, market, log):
             "reversal_rate_mid": reversal_rate_mid,
             "reversal_strength_mid": reversal_strength_mid,
 
-            # --- スコア ---
-            "score": score,
+            # --- スコア（短期・中期） ---
+            "short_score": short_score,
+            "mid_score": mid_score,
+
+            # --- GPT（短期評価） ---
             "gpt_score": gpt.get("score"),
             "gpt_judgement": gpt.get("judgement"),
             "gpt_comment": gpt.get("comment")
