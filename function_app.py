@@ -382,25 +382,46 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             logging.info(msg)
 
             try:
-                # 既存ログを取得（なければ空）
                 try:
                     old = log_blob.download_blob().readall().decode("utf-8")
                 except:
                     old = ""
 
-                # 新しいログを追記
                 new_text = old + msg + "\n"
                 log_blob.upload_blob(new_text, overwrite=True)
 
             except Exception as e:
                 logging.error(f"[LOG-ERROR] Failed to write log to blob: {e}")
 
-        # --- UI から送られた CSV のファイル名を取得 ---
-        csv_filename = req.headers.get("X-Filename", "uploaded.csv")
+        # ============================================================
+        # ★ ここから追加：BLOB の CSV を読み込むモード
+        # ============================================================
+        blob_csv_name = req.headers.get("X-Blob-Filename")
+
+        if blob_csv_name:
+            # block-data コンテナから CSV を取得
+            blob_container = "block-data"  # ← 章さんのコンテナ名
+            log(f"[BLOB] loading CSV from blob: {blob_csv_name}")
+
+            blob_client = blob_service.get_blob_client(
+                container=blob_container,
+                blob=blob_csv_name
+            )
+
+            csv_text = blob_client.download_blob().readall().decode("utf-8")
+            csv_filename = blob_csv_name
+        else:
+            # 従来通り、body の CSV を使う
+            csv_filename = req.headers.get("X-Filename", "uploaded.csv")
+            csv_text = req.get_body().decode("utf-8")
+
         json_filename = csv_filename.replace(".csv", ".json")
 
-        # --- CSV を Body から読み込む ---
-        csv_text = req.get_body().decode("utf-8")
+        # ============================================================
+        # ★ ここまで追加
+        # ============================================================
+
+        # --- CSV を DataFrame に変換 ---
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
         # --- 必須列チェック ---
@@ -424,7 +445,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         # =========================
         for code in df_csv["コード"]:
 
-            time.sleep(0.2)  # ← ★ 追加：処理間隔（安定化の要）
+            time.sleep(0.2)  # ← ★ 安定化のための間隔
 
             symbol = f"{code}.T"
             company_name = name_dict.get(code, "不明")
@@ -460,6 +481,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
+
 
 # =========================
 # AI 買い候補ランキング生成
