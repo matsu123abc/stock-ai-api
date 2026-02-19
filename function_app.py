@@ -457,9 +457,8 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
                 results.append(result)
 
         # --- JSON 保存 ---
-        result_prefix = os.getenv("RESULT_PREFIX", "results")
         today = datetime.now().strftime("%Y-%m-%d")
-        output_blob_name = f"{result_prefix}/{today}/{json_filename}"
+        output_blob_name = f"{today}/{json_filename}"
 
         output_blob = blob_service.get_blob_client(result_container, output_blob_name)
 
