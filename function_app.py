@@ -275,23 +275,16 @@ def process_symbol(symbol, company_name, market, log):
         # =========================
         # ⑤ スコア（日足のみ）
         # =========================
-        # --- 短期スコア（short_score） ---
         short_score = (
-            reversal_rate * 0.6 +
-            reversal_strength * 0.6 +
-            slope_ema20 * 0.4 +
-            volume_ratio * 0.3 +
-            drop_rate * 0.2
+            (reversal_strength or 0) * 0.4 +
+            (volume_ratio or 0) * 0.2 +
+            (slope_ema20 or 0) * 0.2 +
+            (drop_rate or 0) * 0.1 -
+            (atr or 0) * 0.1
         )
 
-        # --- 中期スコア（mid_score） ---
-        mid_score = (
-            reversal_rate_mid * 0.5 +
-            reversal_strength_mid * 0.5 +
-            slope_ema50_mid * 0.4 +
-            drop_rate_mid * 0.3 -
-            ATR * 0.1
-        )
+        # 中期スコアは日足ベースに統一
+        mid_score = short_score
 
         # =========================
         # ⑥ GPT スコア（日足のみ）
