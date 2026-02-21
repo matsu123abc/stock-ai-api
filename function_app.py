@@ -190,7 +190,7 @@ def screening_conditions(
 
     return True
 
-def process_symbol(symbol, company_name, market, log):
+def process_symbol(symbol, company_name, market, log, python_condition):
     try:
         # =========================
         # ① 日足データ（180日・1d）
@@ -273,7 +273,34 @@ def process_symbol(symbol, company_name, market, log):
             return None
 
         # =========================
-        # ⑤ スコア（日足のみ）
+        # ⑤ python_condition の評価
+        # =========================
+
+        # --- 安全な eval ---
+        def eval_python_condition(condition, ctx):
+            try:
+                return bool(eval(condition, {"__builtins__": None}, ctx))
+            except:
+                return False
+
+        # --- 評価用コンテキスト ---
+        context = {
+            "ema20_vs_ema50": (ema20 - ema50) if ema20 and ema50 else None,
+            "ema50_vs_ema200": (ema50 - safe_float(df["EMA200"].iloc[-1])) if "EMA200" in df else None,
+            "price_vs_ema20_pct": (close_price / ema20 - 1) * 100 if ema20 else None,
+            "drop_from_high_pct": drop_rate,
+            "rebound_from_low_pct": reversal_rate,
+            "vol_vs_ma20": volume_ratio,
+            "atr_ratio": (atr / close_price * 100) if close_price else None,
+        }
+
+        # --- python_condition によるフィルタリング ---
+        if python_condition and not eval_python_condition(python_condition, context):
+            log(f"[FILTER] {symbol}: python_condition NG")
+            return None
+
+        # =========================
+        # ⑥ スコア（日足のみ）
         # =========================
         short_score = (
             (reversal_strength or 0) * 0.4 +
@@ -283,11 +310,10 @@ def process_symbol(symbol, company_name, market, log):
             (atr or 0) * 0.1
         )
 
-        # 中期スコアは日足ベースに統一
-        mid_score = short_score
+        mid_score = short_score  # 中期スコアは日足に統一
 
         # =========================
-        # ⑥ GPT スコア（日足のみ）
+        # ⑦ GPT スコア（日足のみ）
         # =========================
         gpt = gpt_score(
             symbol, company_name, close_price, market_cap,
@@ -297,7 +323,7 @@ def process_symbol(symbol, company_name, market, log):
         )
 
         # =========================
-        # ⑦ 結果まとめ（UI 互換性維持）
+        # ⑧ 結果まとめ
         # =========================
         return {
             "symbol": symbol,
@@ -305,7 +331,6 @@ def process_symbol(symbol, company_name, market, log):
             "market": market,
             "close": close_price,
 
-            # --- 日足インジケータ ---
             "EMA20": ema20,
             "EMA50": ema50,
             "ATR": atr,
@@ -316,18 +341,15 @@ def process_symbol(symbol, company_name, market, log):
             "slope_ema20": slope_ema20,
             "volume_ratio": volume_ratio,
 
-            # --- 中期（廃止 → 日足に統一） ---
             "ema50_mid": ema50,
             "slope_ema50_mid": slope_ema20,
             "drop_rate_mid": drop_rate,
             "reversal_rate_mid": reversal_rate,
             "reversal_strength_mid": reversal_strength,
 
-            # --- スコア ---
             "short_score": short_score,
             "mid_score": mid_score,
 
-            # --- GPT ---
             "gpt_score": gpt.get("score"),
             "gpt_judgement": gpt.get("judgement"),
             "gpt_comment": gpt.get("comment")
@@ -336,7 +358,6 @@ def process_symbol(symbol, company_name, market, log):
     except Exception as e:
         log(f"[ERROR] {symbol}: {e}")
         return None
-
 
 
 # =========================
@@ -349,6 +370,19 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening start")
 
     logs = []
+
+    # --- デフォルト条件式（章さんが Azure 側に固定しておく） ---
+    default_python_condition = (
+        "ema20_vs_ema50 > 5 and "
+        "ema50_vs_ema200 > 25 and "
+        "price_vs_ema20_pct > 0.5 and "
+        "vol_vs_ma20 > 0.6 and "
+        "atr_ratio > 1"
+    )
+
+    # --- UI またはローカル PC から条件式が送られてきた場合は上書き ---
+    ui_condition = req.headers.get("X-Python-Condition")
+    python_condition = ui_condition if ui_condition else default_python_condition
 
     try:
         import time  # ← sleep 用
