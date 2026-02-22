@@ -227,6 +227,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         # =========================
         df["EMA20"] = ema(df["Close"], 20)
         df["EMA50"] = ema(df["Close"], 50)
+        df["EMA200"] = ema(df["Close"], 200)   # ★ 追加
         df["ATR"] = calc_atr(df)
         df["vol_ma20"] = df["Volume"].rolling(window=20).mean()
 
@@ -359,7 +360,6 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         log(f"[ERROR] {symbol}: {e}")
         return None
 
-
 # =========================
 # メイン関数（screening ひとつだけ）
 # =========================
@@ -371,30 +371,17 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
     logs = []
 
-    # --- デフォルト条件式（章さんが Azure 側に固定しておく） ---
-    default_python_condition = (
-        "ema20_vs_ema50 > 5 and "
-        "ema50_vs_ema200 > 25 and "
-        "price_vs_ema20_pct > 0.5 and "
-        "vol_vs_ma20 > 0.6 and "
-        "atr_ratio > 1"
-    )
-
-    # --- UI またはローカル PC から条件式が送られてきた場合は上書き ---
-    ui_condition = req.headers.get("X-Python-Condition")
-    python_condition = ui_condition if ui_condition else default_python_condition
-
     try:
-        import time  # ← sleep 用
+        import time
 
-        # ① Blob 接続（最優先）
+        # ① Blob 接続
         connect_str = os.getenv("AzureWebJobsStorage")
         blob_service = BlobServiceClient.from_connection_string(connect_str)
 
         # ② 結果保存先コンテナ
         result_container = os.getenv("RESULT_CONTAINER")
 
-        # ③ ログ初期化（前回分を削除）
+        # ③ ログ初期化
         today = datetime.now().strftime("%Y-%m-%d")
         log_blob_name = f"logs/{today}/screening.log"
 
@@ -403,14 +390,13 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             blob=log_blob_name
         )
 
-        # 空で上書き（存在しなくても OK）
         try:
             log_blob.upload_blob("", overwrite=True)
             logging.info("[LOG] previous log cleared")
         except Exception as e:
             logging.error(f"[LOG-ERROR] failed to clear log: {e}")
 
-        # ④ log() を定義（ここから追記が始まる）
+        # ④ log() 定義
         def log(msg):
             logs.append(msg)
             logging.info(msg)
@@ -427,14 +413,11 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             except Exception as e:
                 logging.error(f"[LOG-ERROR] Failed to write log to blob: {e}")
 
-        # ============================================================
-        # ★ ここから追加：BLOB の CSV を読み込むモード
-        # ============================================================
+        # ⑤ CSV 読み込み（Blob or Body）
         blob_csv_name = req.headers.get("X-Blob-Filename")
 
         if blob_csv_name:
-            # block-data コンテナから CSV を取得
-            blob_container = "block-data"  # ← 章さんのコンテナ名
+            blob_container = "block-data"
             log(f"[BLOB] loading CSV from blob: {blob_csv_name}")
 
             blob_client = blob_service.get_blob_client(
@@ -445,20 +428,14 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             csv_text = blob_client.download_blob().readall().decode("utf-8")
             csv_filename = blob_csv_name
         else:
-            # 従来通り、body の CSV を使う
             csv_filename = req.headers.get("X-Filename", "uploaded.csv")
             csv_text = req.get_body().decode("utf-8")
 
         json_filename = csv_filename.replace(".csv", ".json")
 
-        # ============================================================
-        # ★ ここまで追加
-        # ============================================================
-
-        # --- CSV を DataFrame に変換 ---
+        # ⑥ CSV → DataFrame
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
-        # --- 必須列チェック ---
         required_cols = ["コード", "銘柄名", "市場"]
         for col in required_cols:
             if col not in df_csv.columns:
@@ -468,32 +445,39 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
                     status_code=400
                 )
 
-        # --- 辞書化 ---
         name_dict = dict(zip(df_csv["コード"], df_csv["銘柄名"]))
         market_dict = dict(zip(df_csv["コード"], df_csv["市場"]))
 
+        # ⑦ デフォルト条件式
+        default_python_condition = (
+            "ema20_vs_ema50 > 5 and "
+            "ema50_vs_ema200 > 25 and "
+            "price_vs_ema20_pct > 0.5 and "
+            "vol_vs_ma20 > 0.6 and "
+            "atr_ratio > 1"
+        )
+
+        # ⑧ UI からの上書き
+        ui_condition = req.headers.get("X-Python-Condition")
+        python_condition = ui_condition if ui_condition else default_python_condition
+
+        # ⑨ スクリーニング実行
         results = []
 
-        # =========================
-        # スクリーニングロジック
-        # =========================
         for code in df_csv["コード"]:
-
-            time.sleep(0.3)  # ← ★ 安定化のための間隔
+            time.sleep(0.3)
 
             symbol = f"{code}.T"
             company_name = name_dict.get(code, "不明")
             market = market_dict.get(code, "不明")
 
-            result = process_symbol(symbol, company_name, market, log)
+            result = process_symbol(symbol, company_name, market, log, python_condition)
 
             if result is not None:
                 results.append(result)
 
-        # --- JSON 保存 ---
-        today = datetime.now().strftime("%Y-%m-%d")
+        # ⑩ JSON 保存
         output_blob_name = f"{today}/{json_filename}"
-
         output_blob = blob_service.get_blob_client(result_container, output_blob_name)
 
         json_text = json.dumps(results, ensure_ascii=False, indent=2)
@@ -514,7 +498,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
-
 
 # =========================
 # AI 買い候補ランキング生成
