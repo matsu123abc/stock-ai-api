@@ -236,6 +236,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         close_price = safe_float(latest["Close"])
         ema20 = safe_float(latest["EMA20"])
         ema50 = safe_float(latest["EMA50"])
+        ema200 = safe_float(latest["EMA200"])
         atr = safe_float(latest["ATR"])
 
         # EMA20 の傾き（5日前との差）
@@ -263,15 +264,9 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             reversal_strength = None
 
         # =========================
-        # ④ screening_conditions（日足のみ）
+        # ④ screening_conditions を完全削除
         # =========================
-        if not screening_conditions(
-            market_cap, close_price,
-            drop_rate, reversal_rate, reversal_strength,
-            ema20, ema50
-        ):
-            log(f"[FILTER] {symbol}: screening_conditions NG")
-            return None
+        # （何も書かない）
 
         # =========================
         # ⑤ python_condition の評価
@@ -287,7 +282,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         # --- 評価用コンテキスト ---
         context = {
             "ema20_vs_ema50": (ema20 - ema50) if ema20 and ema50 else None,
-            "ema50_vs_ema200": (ema50 - safe_float(df["EMA200"].iloc[-1])) if "EMA200" in df else None,
+            "ema50_vs_ema200": (ema50 - ema200) if ema50 and ema200 else None,
             "price_vs_ema20_pct": (close_price / ema20 - 1) * 100 if ema20 else None,
             "drop_from_high_pct": drop_rate,
             "rebound_from_low_pct": reversal_rate,
@@ -334,6 +329,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
 
             "EMA20": ema20,
             "EMA50": ema50,
+            "EMA200": ema200,
             "ATR": atr,
             "drop_rate": drop_rate,
             "reversal_rate": reversal_rate,
