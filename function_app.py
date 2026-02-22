@@ -349,7 +349,8 @@ def process_symbol(symbol, company_name, market, log, python_condition):
 
             "gpt_score": gpt.get("score"),
             "gpt_judgement": gpt.get("judgement"),
-            "gpt_comment": gpt.get("comment")
+            "gpt_comment": gpt.get("comment"),
+            "passed_python_condition": True
         }
 
     except Exception as e:
