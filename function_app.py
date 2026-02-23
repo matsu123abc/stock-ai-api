@@ -366,8 +366,6 @@ def process_symbol(symbol, company_name, market, log, python_condition):
 
 @app.function_name(name="screening")
 @app.route(route="screening", methods=["POST"], auth_level="anonymous")
-@app.function_name(name="screening")
-@app.route(route="screening", methods=["POST"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening start")
 
