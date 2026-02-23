@@ -447,11 +447,17 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
         # ⑦ デフォルト条件式
         default_python_condition = (
-            "ema20_vs_ema50 > 5 and "
-            "ema50_vs_ema200 > 25 and "
-            "price_vs_ema20_pct > 0.5 and "
-            "vol_vs_ma20 > 0.6 and "
-            "atr_ratio > 1"
+            "ema20_vs_ema50 > 310 and "
+            "ema50_vs_ema200 > 767 and "
+            "price_vs_ema20_pct > 5.35 and "
+            "ema20_slope > 256 and "
+            "ema50_slope > 153 and "
+            "ema200_slope > 67 and "
+            "drop_from_high_pct < -9.5 and "
+            "rebound_from_low_pct > 17.8 and "
+            "vol_vs_ma20 > 1.68 and "
+            "atr_ratio > 2.14 and "
+            "atr_ratio_slope > 0.31"
         )
 
         # ⑧ UI からの上書き
