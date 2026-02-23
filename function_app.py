@@ -680,3 +680,110 @@ def ranking(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
+
+# =========================
+# 銘柄説明 API（RAG 本体）
+# =========================
+@app.function_name(name="explain_symbol")
+@app.route(route="explain_symbol", methods=["GET"], auth_level="anonymous")
+def explain_symbol(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        symbol = req.params.get("symbol")
+        if not symbol:
+            return func.HttpResponse(
+                json.dumps({"error": "symbol を指定してください"}),
+                mimetype="application/json",
+                status_code=400
+            )
+
+        # --- Azure Search 接続 ---
+        search_endpoint = os.getenv("SEARCH_ENDPOINT")
+        search_key = os.getenv("SEARCH_KEY")
+        index_name = "screening-results"
+
+        search_client = SearchClient(
+            endpoint=search_endpoint,
+            index_name=index_name,
+            credential=AzureKeyCredential(search_key)
+        )
+
+        # --- 最新データを検索（date の降順で 1 件） ---
+        results = search_client.search(
+            search_text=symbol,
+            filter=f"symbol eq '{symbol}'",
+            order_by=["date desc"],
+            top=1
+        )
+
+        docs = list(results)
+        if not docs:
+            return func.HttpResponse(
+                json.dumps({"error": f"{symbol} のデータが見つかりません"}),
+                mimetype="application/json",
+                status_code=404
+            )
+
+        doc = docs[0]
+        r = json.loads(doc["json_text"])
+
+        # --- GPT に説明させる ---
+        client = AzureOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+        )
+
+        prompt = f"""
+あなたは短期トレードの専門家です。
+以下の銘柄データをもとに、投資家向けにわかりやすく説明してください。
+
+【銘柄】
+コード: {r.get("symbol")}
+企業名: {r.get("company_name")}
+株価: {r.get("close")} 円
+市場: {r.get("market")}
+
+【テクニカル指標】
+下落率: {r.get("drop_rate"):.2f}%
+反転率: {r.get("reversal_rate"):.2f}%
+反転強度: {r.get("reversal_strength"):.2f}
+EMA20: {r.get("EMA20")}
+EMA50: {r.get("EMA50")}
+ATR: {r.get("ATR")}
+出来高急増率: {r.get("volume_ratio"):.2f}
+
+【GPT スコア】
+スコア: {r.get("gpt_score")}
+判断: {r.get("gpt_judgement")}
+
+【出力形式】
+- 200〜300文字の解説
+- 今の相場状況で注目すべきポイント
+- リスク要因（100文字以内）
+"""
+
+        res = client.chat.completions.create(
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+
+        explanation = res.choices[0].message.content.strip()
+
+        return func.HttpResponse(
+            json.dumps({
+                "symbol": symbol,
+                "company": r.get("company_name"),
+                "date": doc["date"],
+                "explanation": explanation
+            }, ensure_ascii=False),
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        logging.exception("explain_symbol error")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            mimetype="application/json",
+            status_code=500
+        )
