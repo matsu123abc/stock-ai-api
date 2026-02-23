@@ -789,7 +789,7 @@ ATR: {r.get("ATR")}
         )
 
 # =========================
-# 異常値アラート API
+# 異常値アラート API（最終完成版）
 # =========================
 @app.function_name(name="alert_abnormal")
 @app.route(route="alert_abnormal", methods=["GET"], auth_level="anonymous")
@@ -834,6 +834,10 @@ def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
             if is_abnormal:
                 abnormal_list.append(r)
 
+        # --- 429 対策：異常値が多い場合は 30 件に絞る ---
+        if len(abnormal_list) > 30:
+            abnormal_list = abnormal_list[:30]
+
         # --- AI に説明させる ---
         client = AzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
@@ -863,8 +867,7 @@ def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
     "company": "企業名",
     "reason": "異常値の理由（100〜200文字）",
     "risk": "注意すべきリスク（50〜100文字）"
-  }},
-  ...
+  }}
 ]
 """
 
