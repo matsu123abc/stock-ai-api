@@ -12,6 +12,7 @@ from datetime import datetime
 
 from azure.search.documents import SearchClient
 from azure.core.credentials import AzureKeyCredential
+import time
 
 app = func.FunctionApp()
 
@@ -372,10 +373,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
     logs = []
 
     try:
-        import time
-        from azure.search.documents import SearchClient
-        from azure.core.credentials import AzureKeyCredential
-
         # ① Blob 接続
         connect_str = os.getenv("AzureWebJobsStorage")
         blob_service = BlobServiceClient.from_connection_string(connect_str)
