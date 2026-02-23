@@ -787,3 +787,105 @@ ATR: {r.get("ATR")}
             mimetype="application/json",
             status_code=500
         )
+
+# =========================
+# 異常値アラート API
+# =========================
+@app.function_name(name="alert_abnormal")
+@app.route(route="alert_abnormal", methods=["GET"], auth_level="anonymous")
+def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        # --- Azure Search 接続 ---
+        search_endpoint = os.getenv("SEARCH_ENDPOINT")
+        search_key = os.getenv("SEARCH_KEY")
+        index_name = "screening-results"
+
+        search_client = SearchClient(
+            endpoint=search_endpoint,
+            index_name=index_name,
+            credential=AzureKeyCredential(search_key)
+        )
+
+        # --- 全件取得（最大 1000 件） ---
+        results = search_client.search(
+            search_text="*",
+            top=1000
+        )
+
+        docs = list(results)
+        abnormal_list = []
+
+        # --- 異常値条件 ---
+        for doc in docs:
+            r = json.loads(doc["json_text"])
+
+            atr = r.get("ATR")
+            volume_ratio = r.get("volume_ratio")
+            drop_rate = r.get("drop_rate")
+            reversal_strength = r.get("reversal_strength")
+
+            is_abnormal = (
+                (atr is not None and atr > 1.5) or
+                (volume_ratio is not None and volume_ratio >= 2.0) or
+                (drop_rate is not None and drop_rate <= -40) or
+                (reversal_strength is not None and reversal_strength >= 2.0)
+            )
+
+            if is_abnormal:
+                abnormal_list.append(r)
+
+        # --- AI に説明させる ---
+        client = AzureOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+        )
+
+        prompt = f"""
+あなたは短期トレードの専門家です。
+以下の銘柄は「異常値」を検知した銘柄です。
+
+異常値の種類：
+- ATR が急上昇（ボラティリティ増加）
+- volume_ratio ≥ 2.0（出来高急増）
+- drop_rate ≤ -40%（急落）
+- reversal_strength ≥ 2.0（反転強度が高い）
+
+以下の JSON データを読み取り、
+各銘柄について「なぜ異常なのか」「何に注意すべきか」を簡潔に説明してください。
+
+{json.dumps(abnormal_list, ensure_ascii=False)}
+
+出力形式：
+[
+  {{
+    "symbol": "XXXX",
+    "company": "企業名",
+    "reason": "異常値の理由（100〜200文字）",
+    "risk": "注意すべきリスク（50〜100文字）"
+  }},
+  ...
+]
+"""
+
+        res = client.chat.completions.create(
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+
+        explanation = res.choices[0].message.content.strip()
+
+        return func.HttpResponse(
+            explanation,
+            mimetype="application/json",
+            status_code=200
+        )
+
+    except Exception as e:
+        logging.exception("alert_abnormal error")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            mimetype="application/json",
+            status_code=500
+        )
