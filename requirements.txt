@@ -11,4 +11,6 @@ azure-storage-blob
 ta
 openai
 python-dotenv
+azure-search-documents
+azure-core
 

@@ -10,6 +10,9 @@ from openai import AzureOpenAI
 from azure.storage.blob import BlobServiceClient
 from datetime import datetime
 
+from azure.search.documents import SearchClient
+from azure.core.credentials import AzureKeyCredential
+
 app = func.FunctionApp()
 
 # =========================
@@ -363,6 +366,8 @@ def process_symbol(symbol, company_name, market, log, python_condition):
 
 @app.function_name(name="screening")
 @app.route(route="screening", methods=["POST"], auth_level="anonymous")
+@app.function_name(name="screening")
+@app.route(route="screening", methods=["POST"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("screening start")
 
@@ -370,6 +375,8 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         import time
+        from azure.search.documents import SearchClient
+        from azure.core.credentials import AzureKeyCredential
 
         # ① Blob 接続
         connect_str = os.getenv("AzureWebJobsStorage")
@@ -447,17 +454,11 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
         # ⑦ デフォルト条件式
         default_python_condition = (
-            "ema20_vs_ema50 > 310 and "
-            "ema50_vs_ema200 > 767 and "
-            "price_vs_ema20_pct > 5.35 and "
-            "ema20_slope > 256 and "
-            "ema50_slope > 153 and "
-            "ema200_slope > 67 and "
-            "drop_from_high_pct < -9.5 and "
-            "rebound_from_low_pct > 17.8 and "
-            "vol_vs_ma20 > 1.68 and "
-            "atr_ratio > 2.14 and "
-            "atr_ratio_slope > 0.31"
+            "ema20_vs_ema50 > 5 and "
+            "ema50_vs_ema200 > 25 and "
+            "price_vs_ema20_pct > 0.5 and "
+            "vol_vs_ma20 > 0.6 and "
+            "atr_ratio > 1"
         )
 
         # ⑧ UI からの上書き
@@ -479,13 +480,59 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             if result is not None:
                 results.append(result)
 
-        # ⑩ JSON 保存
+        # ⑩ JSON 保存（Blob）
         output_blob_name = f"{today}/{json_filename}"
         output_blob = blob_service.get_blob_client(result_container, output_blob_name)
 
         json_text = json.dumps(results, ensure_ascii=False, indent=2)
         output_blob.upload_blob(json_text, overwrite=True)
 
+        log(f"[BLOB] JSON saved to {output_blob_name}")
+
+        # =========================
+        # ⑪ Azure AI Search へ登録
+        # =========================
+        try:
+            search_endpoint = os.getenv("SEARCH_ENDPOINT")
+            search_key = os.getenv("SEARCH_KEY")
+            index_name = "screening-results"
+
+            search_client = SearchClient(
+                endpoint=search_endpoint,
+                index_name=index_name,
+                credential=AzureKeyCredential(search_key)
+            )
+
+            docs = []
+            for r in results:
+                doc = {
+                    "id": f"{today}_{r.get('symbol')}",
+                    "date": today,
+                    "symbol": r.get("symbol"),
+                    "company_name": r.get("company_name"),
+                    "json_text": json.dumps(r, ensure_ascii=False),
+                    "gpt_comment": r.get("gpt_comment"),
+                    "indicators": (
+                        f"drop_rate:{r.get('drop_rate')}, "
+                        f"reversal_strength:{r.get('reversal_strength')}, "
+                        f"volume_ratio:{r.get('volume_ratio')}, "
+                        f"atr:{r.get('ATR')}"
+                    )
+                }
+                docs.append(doc)
+
+            if docs:
+                search_client.upload_documents(documents=docs)
+                log(f"[SEARCH] {len(docs)} 件を Azure AI Search に登録しました")
+            else:
+                log("[SEARCH] 登録対象の銘柄がありません")
+
+        except Exception as e:
+            log(f"[SEARCH-ERROR] Search 登録に失敗: {e}")
+
+        # =========================
+        # ⑫ レスポンス返却
+        # =========================
         return func.HttpResponse(
             json.dumps({
                 "saved_to": output_blob_name,
@@ -501,6 +548,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
+
 
 # =========================
 # AI 買い候補ランキング生成
