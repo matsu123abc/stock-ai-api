@@ -501,7 +501,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             docs = []
             for r in results:
                 doc = {
-                    "id": f"{today}_{r.get('symbol')}",
+                    "id": f"{today}_{r.get('symbol').replace('.', '_')}",
                     "date": today,
                     "symbol": r.get("symbol"),
                     "company_name": r.get("company_name"),
