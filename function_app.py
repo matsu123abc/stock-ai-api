@@ -14,6 +14,9 @@ from azure.search.documents import SearchClient
 from azure.core.credentials import AzureKeyCredential
 import time
 
+import pickle
+import numpy as np
+
 app = func.FunctionApp()
 
 # =========================
@@ -360,6 +363,69 @@ def process_symbol(symbol, company_name, market, log, python_condition):
     except Exception as e:
         log(f"[ERROR] {symbol}: {e}")
         return None
+
+
+# -----------------------------
+# Blob からモデルを読み込む
+# -----------------------------
+def load_model_from_blob():
+    connect_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    blob_service = BlobServiceClient.from_connection_string(connect_str)
+    container = blob_service.get_container_client("models")
+
+    # 最新モデルを取得（model_YYYYMMDD.pkl）
+    blobs = list(container.list_blobs())
+    blobs = sorted(blobs, key=lambda x: x.last_modified, reverse=True)
+    latest_blob = blobs[0].name
+
+    blob_client = container.get_blob_client(latest_blob)
+    model_data = blob_client.download_blob().readall()
+
+    model = pickle.loads(model_data)
+    return model
+
+
+# -----------------------------
+# 特徴量生成（train_model.py と同じ）
+# -----------------------------
+def calc_features(df):
+    df["return"] = df["Close"].pct_change()
+    df["vol_change"] = df["Volume"].pct_change()
+    df["ema20"] = df["Close"].ewm(span=20).mean()
+    df["ema20_slope"] = df["ema20"] - df["ema20"].shift(5)
+    df["atr"] = (df["High"] - df["Low"]).rolling(14).mean()
+
+    features = {
+        "ret_1d": df["return"].iloc[-1],
+        "ret_3d": df["return"].iloc[-3:-1].mean(),
+        "ret_5d": df["return"].iloc[-5:-1].mean(),
+        "vol_1d": df["vol_change"].iloc[-1],
+        "vol_5d": df["vol_change"].iloc[-5:-1].mean(),
+        "ema20_slope": df["ema20_slope"].iloc[-1],
+        "atr": df["atr"].iloc[-1],
+    }
+    return features
+
+
+# -----------------------------
+# 銘柄ごとの予測
+# -----------------------------
+def predict_symbol(model, symbol):
+    df = yf.download(symbol, period="60d", interval="1d")
+
+    if len(df) < 20:
+        return None
+
+    feats = calc_features(df)
+    X = np.array(list(feats.values())).reshape(1, -1)
+
+    prob = model.predict(X)[0]
+
+    return {
+        "symbol": symbol,
+        "up_probability": round(prob * 100, 2),
+        "momentum_score": round(prob * 100, 2),
+    }
 
 # =========================
 # メイン関数（screening ひとつだけ）
@@ -793,5 +859,46 @@ def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             mimetype="application/json",
+            status_code=500
+        )
+
+
+# -----------------------------
+# Azure Functions エンドポイント
+# -----------------------------
+@app.function_name(name="third_screening")
+@app.route(route="third_screening", methods=["POST"])
+def third_screening(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        body = req.get_json()
+        symbols = body.get("symbols", [])
+
+        if not symbols:
+            return func.HttpResponse(
+                json.dumps({"error": "symbols が空です"}),
+                status_code=400
+            )
+
+        # モデル読み込み
+        model = load_model_from_blob()
+
+        results = []
+        for sym in symbols:
+            r = predict_symbol(model, sym)
+            if r:
+                results.append(r)
+
+        # 上昇確率でソート
+        results = sorted(results, key=lambda x: x["up_probability"], reverse=True)
+
+        return func.HttpResponse(
+            json.dumps({"results": results}, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=200
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
             status_code=500
         )
