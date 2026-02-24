@@ -453,7 +453,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             "rebound_from_low_pct > 15 and "
             "ema20_vs_ema50 > 5 and "
             "ema50_vs_ema200 > 25 and "
-            "price_vs_ema20_pct > 0.5 and "
+            "price_vs_ema20_pct > 2 and "
             "vol_vs_ma20 > 0.6 and "
             "atr_ratio > 1"
         )
