@@ -285,8 +285,8 @@ def process_symbol(symbol, company_name, market, log, python_condition):
 
         # --- 評価用コンテキスト ---
         context = {
-            "ema20_vs_ema50": (ema20 - ema50) if ema20 and ema50 else None,
-            "ema50_vs_ema200": (ema50 - ema200) if ema50 and ema200 else None,
+            "ema20_vs_ema50": (ema20 - ema50) / ema50 * 100 if ema50 else None,
+            "ema50_vs_ema200": (ema50 - ema200) / ema200 * 100 if ema200 else None,
             "price_vs_ema20_pct": (close_price / ema20 - 1) * 100 if ema20 else None,
             "drop_from_high_pct": drop_rate,
             "rebound_from_low_pct": reversal_rate,
@@ -451,8 +451,8 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         default_python_condition = (
             "drop_from_high_pct < -20 and "
             "rebound_from_low_pct > 25 and "
-            "ema20_vs_ema50 > 5 and "
-            "ema50_vs_ema200 > 25 and "
+            "ema20_vs_ema50 > 1.0 and "
+            "ema50_vs_ema200 > 2.0 and "
             "price_vs_ema20_pct > 2 and "
             "vol_vs_ma20 > 1.0 and "
             "atr_ratio > 1"
