@@ -546,137 +546,37 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         )
 
-
 # =========================
-# AI 買い候補ランキング生成
+# 2次スクリーニング API（ロジック版）
 # =========================
-@app.function_name(name="ranking")
-@app.route(route="ranking", methods=["POST"], auth_level="anonymous")
-def ranking(req: func.HttpRequest) -> func.HttpResponse:
+@app.function_name(name="second_screening")
+@app.route(route="second_screening", methods=["POST"], auth_level="anonymous")
+def second_screening(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
         results = body.get("results", [])
 
-        client = AzureOpenAI(
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
-        )
-
-        # --- SCORE 計算（短期 & 中期） ---
+        # --- 2次スクリーニング条件 ---
+        filtered = []
         for r in results:
-            # 短期スコア（short_score）
-            r["short_score"] = (
-                (r.get("reversal_strength") or 0) * 0.4 +
-                (r.get("volume_ratio") or 0) * 0.2 +
-                (r.get("slope_ema20") or 0) * 0.2 +
-                (r.get("drop_rate") or 0) * 0.1 -
-                (r.get("ATR") or 0) * 0.1
-            )
+            if (
+                (r.get("reversal_strength") or 0) > 0.6 and
+                (r.get("slope_ema20") or 0) > 50 and
+                (r.get("volume_ratio") or 0) > 1.2
+            ):
+                filtered.append(r)
 
-            # 中期スコア（mid_score）
-            r["mid_score"] = (
-                (r.get("reversal_strength_mid") or 0) * 0.5 +
-                (r.get("slope_ema50_mid") or 0) * 0.3 +
-                (r.get("drop_rate_mid") or 0) * 0.2
-            )
-
-        # --- GPT に渡す比較しやすい形式 ---
-        items_text = ""
-        for r in results:
-            items_text += f"{r.get('symbol')} ({r.get('company_name')}): "
-            items_text += f"short_score={r.get('short_score'):.2f}, "
-            items_text += f"mid_score={r.get('mid_score'):.2f}, "
-            items_text += f"reversal_strength={r.get('reversal_strength')}, "
-            items_text += f"reversal_strength_mid={r.get('reversal_strength_mid')}, "
-            items_text += f"slope_ema20={r.get('slope_ema20')}, "
-            items_text += f"slope_ema50_mid={r.get('slope_ema50_mid')}, "
-            items_text += f"drop_rate={r.get('drop_rate')}, "
-            items_text += f"drop_rate_mid={r.get('drop_rate_mid')}, "
-            items_text += f"volume_ratio={r.get('volume_ratio')}, "
-            items_text += f"ATR={r.get('ATR')}\n"
-
-        # --- GPT プロンプト（短期 × 中期 SCORE 最適化版） ---
-        prompt = f"""
-あなたは短期トレードの専門家です。
-
-以下の銘柄データを比較し、
-「買い候補トップ3」を選び、JSON 形式で出力してください。
-
-【銘柄データ】
-{items_text}
-
-【評価基準】
-1. 短期SCORE（short_score）
-2. 中期SCORE（mid_score）
-3. 反転強度（短期・中期）
-4. 出来高急増率（volume_ratio）
-5. ATR（リスクの低さ）
-6. EMA20/EMA50 と EMA50_mid の整合性
-
-【短期 × 中期の評価ルール】
-・短期と中期の傾きが一致している銘柄は強く評価する
-・短期が強く中期が弱い場合は「短期先行型」
-・中期が強く短期が弱い場合は「中期主導型」
-・反転強度の差が大きい場合は理由に含める
-・EMA20/EMA50 と EMA50_mid の整合性を評価する
-
-【観点割り当てルール】
-・3銘柄の理由は必ず異なる観点を使うこと
-　- 勢い（反転強度・EMA傾き）
-　- 安定性（ATR・出来高）
-　- 割安性（下落率）
-　- トレンド（EMA20/EMA50）
-・同じ観点を複数銘柄で使ってはならない
-
-【理由の書き方】
-・短期と中期の勢いの違いを必ず1文含める
-・どちらが主導しているかを明確にする
-・時間軸の整合性（同方向 or 乖離）を説明する
-・理由は200文字以内
-・リスクと注意点は100文字以内
-
-【出力フォーマット（JSON のみ）】
-{{
-  "ranking": [
-    {{
-      "rank": 1,
-      "symbol": "XXXX.T",
-      "company": "銘柄名",
-      "reason": "200文字以内（観点1つ）",
-      "risk": "100文字以内",
-      "note": "100文字以内"
-    }},
-    {{
-      "rank": 2
-    }},
-    {{
-      "rank": 3
-    }}
-  ]
-}}
-前後に説明文は書かず、JSON のみを返してください。
-"""
-
-        # --- GPT 呼び出し ---
-        res = client.chat.completions.create(
-            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-
-        raw = res.choices[0].message.content.strip()
-        json_start = raw.find("{")
-        json_end = raw.rfind("}") + 1
-        ranking_json = json.loads(raw[json_start:json_end])
-
+        # --- UI 表示用 JSON を返す ---
         return func.HttpResponse(
-            json.dumps(ranking_json, ensure_ascii=False, indent=2),
+            json.dumps({
+                "second_screening": filtered,
+                "count": len(filtered)
+            }, ensure_ascii=False, indent=2),
             mimetype="application/json"
         )
 
     except Exception as e:
-        logging.exception("ranking error")
+        logging.exception("second_screening error")
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             mimetype="application/json",
