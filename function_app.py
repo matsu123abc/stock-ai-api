@@ -562,7 +562,7 @@ def second_screening(req: func.HttpRequest) -> func.HttpResponse:
             # second_screening 内の条件をこれに変更
             if (
                 (r.get("reversal_strength") or 0) > 0.8 and
-                (r.get("slope_ema20") or 0) > 25 and
+                (r.get("slope_ema20") or 0) > 30 and
                 (r.get("volume_ratio") or 0) > 1.0
             ):
                 filtered.append(r)
