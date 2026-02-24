@@ -449,9 +449,9 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
         # ⑦ デフォルト条件式
         default_python_condition = (
-            "drop_from_high_pct < -15 and "
-            "rebound_from_low_pct > 10 and "
-            "vol_vs_ma20 > 1.5 and "
+            "drop_from_high_pct < -10 and "
+            "rebound_from_low_pct > 5 and "
+            "vol_vs_ma20 > 1.2 and "
             "ema20 > ema50 and "
             "ema50 > ema200"
         )
