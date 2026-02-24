@@ -449,13 +449,13 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
         # ⑦ デフォルト条件式
         default_python_condition = (
-            "drop_from_high_pct < -10 and "
-            "rebound_from_low_pct > 5 and "
-            "vol_vs_ma20 > 1.2 and "
-            "ema20 > ema50 and "
-            "ema50 > ema200"
+            "ema20_vs_ema50 > 5 and "
+            "ema50_vs_ema200 > 25 and "
+            "price_vs_ema20_pct > 0.5 and "
+            "vol_vs_ma20 > 0.6 and "
+            "atr_ratio > 1"
         )
-
+        
         # ⑧ UI からの上書き
         ui_condition = req.headers.get("X-Python-Condition")
         python_condition = ui_condition if ui_condition else default_python_condition
