@@ -2,17 +2,16 @@ import os
 import logging
 import json
 import io
+import time
+from datetime import datetime
 
 import azure.functions as func
 import yfinance as yf
 import pandas as pd
 from openai import AzureOpenAI
 from azure.storage.blob import BlobServiceClient
-from datetime import datetime
-
 from azure.search.documents import SearchClient
 from azure.core.credentials import AzureKeyCredential
-import time
 
 import pickle
 import numpy as np
@@ -104,7 +103,6 @@ def calc_score(drop_rate, reversal_rate, reversal_strength,
 
     return score
 
-
 def gpt_score(symbol, name, price, market_cap,
               drop_rate, reversal_rate, reversal_strength,
               ema20, ema50, slope_ema20,
@@ -175,23 +173,19 @@ def screening_conditions(
     drop_rate, reversal_rate, reversal_strength,
     ema20, ema50
 ):
-    # --- 基本条件 ---
     if market_cap is None or market_cap < 300:
         return False
     if price is None or price < 300:
         return False
 
-    # --- 高値→安値→反転パターン ---
     if drop_rate is None or drop_rate > -10:
         return False
     if reversal_rate is None or reversal_rate < 4:
         return False
 
-    # --- 反転強度 < 1 ---
     if reversal_strength is None or reversal_strength >= 1:
         return False
 
-    # --- EMA20 > EMA50 ---
     if ema20 is None or ema50 is None or ema20 <= ema50:
         return False
 
@@ -199,9 +193,6 @@ def screening_conditions(
 
 def process_symbol(symbol, company_name, market, log, python_condition):
     try:
-        # =========================
-        # ① 日足データ（180日・1d）
-        # =========================
         log(f"[DOWNLOAD-START] {symbol}: downloading 180d/1d data")
 
         df = yf.download(symbol, period="180d", interval="1d")
@@ -212,7 +203,6 @@ def process_symbol(symbol, company_name, market, log, python_condition):
 
         log(f"[DOWNLOAD-END] {symbol}: {len(df)} rows downloaded")
 
-        # --- 時価総額 ---
         try:
             ticker = yf.Ticker(symbol)
             fi = getattr(ticker, "fast_info", None)
@@ -229,12 +219,9 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         except:
             market_cap = None
 
-        # =========================
-        # ② 日足インジケータ計算
-        # =========================
         df["EMA20"] = ema(df["Close"], 20)
         df["EMA50"] = ema(df["Close"], 50)
-        df["EMA200"] = ema(df["Close"], 200)   # ★ 追加
+        df["EMA200"] = ema(df["Close"], 200)
         df["ATR"] = calc_atr(df)
         df["vol_ma20"] = df["Volume"].rolling(window=20).mean()
 
@@ -246,18 +233,13 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         ema200 = safe_float(latest["EMA200"])
         atr = safe_float(latest["ATR"])
 
-        # EMA20 の傾き（5日前との差）
         ema20_prev = safe_float(df["EMA20"].iloc[-5])
         slope_ema20 = safe_float(ema20 - ema20_prev)
 
-        # 出来高
         vol_ma20 = safe_float(latest["vol_ma20"])
         volume = safe_float(latest["Volume"])
         volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
 
-        # =========================
-        # ③ 反転パターン（日足ベース）
-        # =========================
         recent = df.tail(120)
         peak_price = safe_float(recent["High"].max())
         bottom_price = safe_float(recent["Low"].min())
@@ -270,23 +252,12 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         else:
             reversal_strength = None
 
-        # =========================
-        # ④ screening_conditions を完全削除
-        # =========================
-        # （何も書かない）
-
-        # =========================
-        # ⑤ python_condition の評価
-        # =========================
-
-        # --- 安全な eval ---
         def eval_python_condition(condition, ctx):
             try:
                 return bool(eval(condition, {"__builtins__": None}, ctx))
             except:
                 return False
 
-        # --- 評価用コンテキスト ---
         context = {
             "ema20_vs_ema50": (ema20 - ema50) / ema50 * 100 if ema50 else None,
             "ema50_vs_ema200": (ema50 - ema200) / ema200 * 100 if ema200 else None,
@@ -297,27 +268,20 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             "atr_ratio": (atr / close_price * 100) if close_price else None,
         }
 
-        # --- python_condition によるフィルタリング ---
         if python_condition and not eval_python_condition(python_condition, context):
             log(f"[FILTER] {symbol}: python_condition NG")
             return None
 
-        # =========================
-        # ⑥ スコア（日足のみ）
-        # =========================
         short_score = (
             (reversal_strength or 0) * 0.4 +
             (volume_ratio or 0) * 0.2 +
             (slope_ema20 or 0) * 0.2 +
-            (drop_rate or 0) * 0.1 -
+            (drop_rate or 0) * 0.1 - 
             (atr or 0) * 0.1
         )
 
-        mid_score = short_score  # 中期スコアは日足に統一
+        mid_score = short_score
 
-        # =========================
-        # ⑦ GPT スコア（日足のみ）
-        # =========================
         gpt = gpt_score(
             symbol, company_name, close_price, market_cap,
             drop_rate, reversal_rate, reversal_strength,
@@ -325,9 +289,6 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             atr, volume, vol_ma20, volume_ratio
         )
 
-        # =========================
-        # ⑧ 結果まとめ
-        # =========================
         return {
             "symbol": symbol,
             "company_name": company_name,
@@ -364,27 +325,6 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         log(f"[ERROR] {symbol}: {e}")
         return None
 
-
-# -----------------------------
-# Blob からモデルを読み込む
-# -----------------------------
-def load_model_from_blob():
-    connect_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-    blob_service = BlobServiceClient.from_connection_string(connect_str)
-    container = blob_service.get_container_client("models")
-
-    # 最新モデルを取得（model_YYYYMMDD.pkl）
-    blobs = list(container.list_blobs())
-    blobs = sorted(blobs, key=lambda x: x.last_modified, reverse=True)
-    latest_blob = blobs[0].name
-
-    blob_client = container.get_blob_client(latest_blob)
-    model_data = blob_client.download_blob().readall()
-
-    model = pickle.loads(model_data)
-    return model
-
-
 # -----------------------------
 # 特徴量生成（train_model.py と同じ）
 # -----------------------------
@@ -407,30 +347,9 @@ def calc_features(df):
     return features
 
 
-# -----------------------------
-# 銘柄ごとの予測
-# -----------------------------
-def predict_symbol(model, symbol):
-    df = yf.download(symbol, period="60d", interval="1d")
-
-    if len(df) < 20:
-        return None
-
-    feats = calc_features(df)
-    X = np.array(list(feats.values())).reshape(1, -1)
-
-    prob = model.predict(X)[0]
-
-    return {
-        "symbol": symbol,
-        "up_probability": round(prob * 100, 2),
-        "momentum_score": round(prob * 100, 2),
-    }
-
 # =========================
-# メイン関数（screening ひとつだけ）
+# メイン関数（screening）
 # =========================
-
 @app.function_name(name="screening")
 @app.route(route="screening", methods=["POST"], auth_level="anonymous")
 def screening(req: func.HttpRequest) -> func.HttpResponse:
@@ -439,14 +358,11 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
     logs = []
 
     try:
-        # ① Blob 接続
         connect_str = os.getenv("AzureWebJobsStorage")
         blob_service = BlobServiceClient.from_connection_string(connect_str)
 
-        # ② 結果保存先コンテナ
         result_container = os.getenv("RESULT_CONTAINER")
 
-        # ③ ログ初期化
         today = datetime.now().strftime("%Y-%m-%d")
         log_blob_name = f"logs/{today}/screening.log"
 
@@ -461,7 +377,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         except Exception as e:
             logging.error(f"[LOG-ERROR] failed to clear log: {e}")
 
-        # ④ log() 定義
         def log(msg):
             logs.append(msg)
             logging.info(msg)
@@ -478,7 +393,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             except Exception as e:
                 logging.error(f"[LOG-ERROR] Failed to write log to blob: {e}")
 
-        # ⑤ CSV 読み込み（Blob or Body）
         blob_csv_name = req.headers.get("X-Blob-Filename")
 
         if blob_csv_name:
@@ -498,7 +412,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
         json_filename = csv_filename.replace(".csv", ".json")
 
-        # ⑥ CSV → DataFrame
         df_csv = pd.read_csv(io.StringIO(csv_text))
 
         required_cols = ["コード", "銘柄名", "市場"]
@@ -513,7 +426,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         name_dict = dict(zip(df_csv["コード"], df_csv["銘柄名"]))
         market_dict = dict(zip(df_csv["コード"], df_csv["市場"]))
 
-        # ⑦ デフォルト条件式
         default_python_condition = (
             "drop_from_high_pct < -20 and "
             "rebound_from_low_pct > 25 and "
@@ -523,12 +435,10 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             "vol_vs_ma20 > 1.0 and "
             "atr_ratio > 1"
         )
-       
-        # ⑧ UI からの上書き
+
         ui_condition = req.headers.get("X-Python-Condition")
         python_condition = ui_condition if ui_condition else default_python_condition
 
-        # ⑨ スクリーニング実行
         results = []
 
         for code in df_csv["コード"]:
@@ -543,7 +453,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
             if result is not None:
                 results.append(result)
 
-        # ⑩ JSON 保存（Blob）
         output_blob_name = f"{today}/{json_filename}"
         output_blob = blob_service.get_blob_client(result_container, output_blob_name)
 
@@ -552,9 +461,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
 
         log(f"[BLOB] JSON saved to {output_blob_name}")
 
-        # =========================
-        # ⑪ Azure AI Search へ登録
-        # =========================
         try:
             search_endpoint = os.getenv("SEARCH_ENDPOINT")
             search_key = os.getenv("SEARCH_KEY")
@@ -593,9 +499,6 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         except Exception as e:
             log(f"[SEARCH-ERROR] Search 登録に失敗: {e}")
 
-        # =========================
-        # ⑫ レスポンス返却
-        # =========================
         return func.HttpResponse(
             json.dumps({
                 "saved_to": output_blob_name,
@@ -613,7 +516,7 @@ def screening(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 # =========================
-# 2次スクリーニング API（ロジック版）
+# 2次スクリーニング API
 # =========================
 @app.function_name(name="second_screening")
 @app.route(route="second_screening", methods=["POST"], auth_level="anonymous")
@@ -622,10 +525,8 @@ def second_screening(req: func.HttpRequest) -> func.HttpResponse:
         body = req.get_json()
         results = body.get("results", [])
 
-        # --- 2次スクリーニング条件 ---
         filtered = []
         for r in results:
-            # second_screening 内の条件をこれに変更
             if (
                 (r.get("reversal_strength") or 0) > 0.8 and
                 (r.get("slope_ema20") or 0) > 30 and
@@ -633,7 +534,6 @@ def second_screening(req: func.HttpRequest) -> func.HttpResponse:
             ):
                 filtered.append(r)
 
-        # --- UI 表示用 JSON を返す ---
         return func.HttpResponse(
             json.dumps({
                 "second_screening": filtered,
@@ -651,7 +551,7 @@ def second_screening(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 # =========================
-# 銘柄説明 API（RAG 本体）
+# 銘柄説明 API（RAG）
 # =========================
 @app.function_name(name="explain_symbol")
 @app.route(route="explain_symbol", methods=["GET"], auth_level="anonymous")
@@ -665,7 +565,6 @@ def explain_symbol(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
 
-        # --- Azure Search 接続 ---
         search_endpoint = os.getenv("SEARCH_ENDPOINT")
         search_key = os.getenv("SEARCH_KEY")
         index_name = "screening-results"
@@ -676,7 +575,6 @@ def explain_symbol(req: func.HttpRequest) -> func.HttpResponse:
             credential=AzureKeyCredential(search_key)
         )
 
-        # --- 最新データを検索（date の降順で 1 件） ---
         results = search_client.search(
             search_text=symbol,
             filter=f"symbol eq '{symbol}'",
@@ -695,7 +593,6 @@ def explain_symbol(req: func.HttpRequest) -> func.HttpResponse:
         doc = docs[0]
         r = json.loads(doc["json_text"])
 
-        # --- GPT に説明させる ---
         client = AzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
@@ -758,13 +655,12 @@ ATR: {r.get("ATR")}
         )
 
 # =========================
-# 異常値アラート API（最終完成版）
+# 異常値アラート API
 # =========================
 @app.function_name(name="alert_abnormal")
 @app.route(route="alert_abnormal", methods=["GET"], auth_level="anonymous")
 def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
     try:
-        # --- Azure Search 接続 ---
         search_endpoint = os.getenv("SEARCH_ENDPOINT")
         search_key = os.getenv("SEARCH_KEY")
         index_name = "screening-results"
@@ -775,7 +671,6 @@ def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
             credential=AzureKeyCredential(search_key)
         )
 
-        # --- 全件取得（最大 1000 件） ---
         results = search_client.search(
             search_text="*",
             top=1000
@@ -784,7 +679,6 @@ def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
         docs = list(results)
         abnormal_list = []
 
-        # --- 異常値条件 ---
         for doc in docs:
             r = json.loads(doc["json_text"])
 
@@ -803,11 +697,9 @@ def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
             if is_abnormal:
                 abnormal_list.append(r)
 
-        # --- 429 対策：異常値が多い場合は 30 件に絞る ---
         if len(abnormal_list) > 30:
             abnormal_list = abnormal_list[:30]
 
-        # --- AI に説明させる ---
         client = AzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
@@ -862,12 +754,11 @@ def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         )
 
-
-# -----------------------------
-# Azure Functions エンドポイント
-# -----------------------------
+# =========================
+# 3次スクリーニング（企業業績 × AI 分析版）
+# =========================
 @app.function_name(name="third_screening")
-@app.route(route="third_screening", methods=["POST"])
+@app.route(route="third_screening", methods=["POST"], auth_level="anonymous")
 def third_screening(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
@@ -879,17 +770,57 @@ def third_screening(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
 
-        # モデル読み込み
-        model = load_model_from_blob()
-
         results = []
-        for sym in symbols:
-            r = predict_symbol(model, sym)
-            if r:
-                results.append(r)
 
-        # 上昇確率でソート
-        results = sorted(results, key=lambda x: x["up_probability"], reverse=True)
+        for sym in symbols:
+            ticker = yf.Ticker(sym)
+            info = ticker.info
+
+            fundamentals = {
+                "売上高": info.get("totalRevenue"),
+                "営業利益率": info.get("operatingMargins"),
+                "純利益率": info.get("profitMargins"),
+                "EPS": info.get("trailingEps"),
+                "PER": info.get("trailingPE"),
+                "PBR": info.get("priceToBook"),
+                "ROE": info.get("returnOnEquity"),
+                "売上成長率": info.get("revenueGrowth"),
+                "利益成長率": info.get("earningsGrowth"),
+                "フリーCF": info.get("freeCashflow"),
+                "負債総額": info.get("totalDebt"),
+                "現金": info.get("totalCash"),
+            }
+
+            client = AzureOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            )
+
+            prompt = f"""
+あなたはプロの株式アナリストです。
+以下の企業業績データをもとに、企業の強み・弱み・リスク・総合評価を簡潔に説明してください。
+
+銘柄: {sym}
+業績データ:
+{fundamentals}
+
+日本語で、投資家向けに分かりやすく説明してください。
+"""
+
+            ai_res = client.chat.completions.create(
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+
+            analysis = ai_res.choices[0].message.content.strip()
+
+            results.append({
+                "symbol": sym,
+                "fundamentals": fundamentals,
+                "analysis": analysis
+            })
 
         return func.HttpResponse(
             json.dumps({"results": results}, ensure_ascii=False),
@@ -898,6 +829,7 @@ def third_screening(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
+        logging.exception("third_screening error")
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             status_code=500
