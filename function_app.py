@@ -329,6 +329,23 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         log(f"[ERROR] {symbol} processing error: {e}")
         return None
 
+def load_latest_model_from_blob():
+    connect_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    blob_service = BlobServiceClient.from_connection_string(connect_str)
+    container = blob_service.get_container_client("models")
+
+    blobs = list(container.list_blobs())
+    model_files = [b.name for b in blobs if b.name.startswith("model_")]
+
+    if not model_files:
+        raise Exception("Blob にモデルがありません")
+
+    latest = sorted(model_files)[-1]
+
+    downloader = container.download_blob(latest)
+    model_bytes = downloader.readall()
+
+    return pickle.loads(model_bytes)
 
 # -----------------------------
 # 特徴量生成（train_model.py と同じ）
@@ -350,6 +367,13 @@ def calc_features(df):
         "atr": df["atr"].iloc[-1],
     }
     return features
+
+def build_features_for_symbol(symbol):
+    df = yf.download(symbol, period="180d", interval="1d")
+    if len(df) < 30:
+        return None
+    feats = calc_features(df)
+    return np.array(list(feats.values())).reshape(1, -1)
 
 
 # =========================
@@ -659,105 +683,6 @@ ATR: {r.get("ATR")}
             status_code=500
         )
 
-# =========================
-# 異常値アラート API
-# =========================
-@app.function_name(name="alert_abnormal")
-@app.route(route="alert_abnormal", methods=["GET"], auth_level="anonymous")
-def alert_abnormal(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        search_endpoint = os.getenv("SEARCH_ENDPOINT")
-        search_key = os.getenv("SEARCH_KEY")
-        index_name = "screening-results"
-
-        search_client = SearchClient(
-            endpoint=search_endpoint,
-            index_name=index_name,
-            credential=AzureKeyCredential(search_key)
-        )
-
-        results = search_client.search(
-            search_text="*",
-            top=1000
-        )
-
-        docs = list(results)
-        abnormal_list = []
-
-        for doc in docs:
-            r = json.loads(doc["json_text"])
-
-            atr = r.get("ATR")
-            volume_ratio = r.get("volume_ratio")
-            drop_rate = r.get("drop_rate")
-            reversal_strength = r.get("reversal_strength")
-
-            is_abnormal = (
-                (atr is not None and atr > 1.5) or
-                (volume_ratio is not None and volume_ratio >= 2.0) or
-                (drop_rate is not None and drop_rate <= -40) or
-                (reversal_strength is not None and reversal_strength >= 2.0)
-            )
-
-            if is_abnormal:
-                abnormal_list.append(r)
-
-        if len(abnormal_list) > 30:
-            abnormal_list = abnormal_list[:30]
-
-        client = AzureOpenAI(
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
-        )
-
-        prompt = f"""
-あなたは短期トレードの専門家です。
-以下の銘柄は「異常値」を検知した銘柄です。
-
-異常値の種類：
-- ATR が急上昇（ボラティリティ増加）
-- volume_ratio ≥ 2.0（出来高急増）
-- drop_rate ≤ -40%（急落）
-- reversal_strength ≥ 2.0（反転強度が高い）
-
-以下の JSON データを読み取り、
-各銘柄について「なぜ異常なのか」「何に注意すべきか」を簡潔に説明してください。
-
-{json.dumps(abnormal_list, ensure_ascii=False)}
-
-出力形式：
-[
-  {{
-    "symbol": "XXXX",
-    "company": "企業名",
-    "reason": "異常値の理由（100〜200文字）",
-    "risk": "注意すべきリスク（50〜100文字）"
-  }}
-]
-"""
-
-        res = client.chat.completions.create(
-            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-
-        explanation = res.choices[0].message.content.strip()
-
-        return func.HttpResponse(
-            explanation,
-            mimetype="application/json",
-            status_code=200
-        )
-
-    except Exception as e:
-        logging.exception("alert_abnormal error")
-        return func.HttpResponse(
-            json.dumps({"error": str(e)}),
-            mimetype="application/json",
-            status_code=500
-        )
 
 # =========================
 # 3次スクリーニング（企業業績 × AI 分析版）
@@ -838,4 +763,50 @@ def third_screening(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             status_code=500
+        )
+
+@app.function_name(name="predict_from_symbols")
+@app.route(route="predict_from_symbols", methods=["POST"])
+def predict_from_symbols(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        body = req.get_json()
+        symbols = body.get("symbols", [])
+
+        if not symbols:
+            return func.HttpResponse(
+                json.dumps({"error": "symbols が空です"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+
+        model = load_latest_model_from_blob()
+
+        results = []
+
+        for sym in symbols:
+            feats = build_features_for_symbol(sym)
+            if feats is None:
+                results.append({
+                    "symbol": sym,
+                    "prob": None
+                })
+                continue
+
+            prob = float(model.predict(feats)[0] * 100)
+
+            results.append({
+                "symbol": sym,
+                "prob": round(prob, 2)
+            })
+
+        return func.HttpResponse(
+            json.dumps({"predictions": results}, ensure_ascii=False),
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json"
         )
