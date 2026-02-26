@@ -191,7 +191,6 @@ def screening_conditions(
 
     return True
 
-
 def process_symbol(symbol, company_name, market, log, python_condition):
     try:
         log(f"[DOWNLOAD-START] {symbol}: downloading 180d/1d data")
@@ -236,9 +235,13 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         ema20_now = df["EMA20"].iloc[-1]
         ema20_prev = df["EMA20"].iloc[-5]  # 5日前
 
-        slope_prev = safe_float(df["EMA20"].iloc[-6] - df["EMA20"].iloc[-11])  # 過去の傾き
-        slope_now = safe_float(ema20_now - ema20_prev)  # 現在の傾き
+        # 過去の傾き（5日前と10日前の差）
+        slope_prev = safe_float(df["EMA20"].iloc[-6] - df["EMA20"].iloc[-11])
 
+        # 現在の傾き（今日と5日前の差）
+        slope_now = safe_float(ema20_now - ema20_prev)
+
+        # slope の符号変化で反転判定
         is_reversal = (slope_prev < 0 and slope_now > 0)
 
         if not is_reversal:
@@ -272,25 +275,11 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         else:
             reversal_strength = None
 
-        def eval_python_condition(condition, ctx):
-            try:
-                return bool(eval(condition, {"__builtins__": None}, ctx))
-            except:
-                return False
-
-        context = {
-            "ema20_vs_ema50": (ema20 - ema50) / ema50 * 100 if ema50 else None,
-            "ema50_vs_ema200": (ema50 - ema200) / ema200 * 100 if ema200 else None,
-            "price_vs_ema20_pct": (close_price / ema20 - 1) * 100 if ema20 else None,
-            "drop_from_high_pct": drop_rate,
-            "rebound_from_low_pct": reversal_rate,
-            "vol_vs_ma20": volume_ratio,
-            "atr_ratio": (atr / close_price * 100) if close_price else None,
-        }
-
-        if python_condition and not eval_python_condition(python_condition, context):
-            log(f"[FILTER] {symbol}: python_condition NG")
-            return None
+        # --- ★ python_condition を完全に無効化 ---
+        # （反転抽出だけを行うため）
+        # if python_condition and not eval_python_condition(python_condition, context):
+        #     log(f"[FILTER] {symbol}: python_condition NG")
+        #     return None
 
         short_score = (
             (reversal_strength or 0) * 0.4 +
