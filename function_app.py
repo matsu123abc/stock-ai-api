@@ -227,7 +227,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         df["ATR"] = calc_atr(df)
         df["vol_ma20"] = df["Volume"].rolling(window=20).mean()
 
-        # --- ★ 反転判定（最小ロジック） ---
+        # --- ★ slope による反転判定 ---
         if len(df) < 25:
             log(f"[SKIP] {symbol}: insufficient data for slope check")
             return None
@@ -235,22 +235,21 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         ema20_now = df["EMA20"].iloc[-1]
         ema20_prev = df["EMA20"].iloc[-5]  # 5日前
 
-        # 過去の傾き（5日前と10日前の差）
         slope_prev = safe_float(df["EMA20"].iloc[-6] - df["EMA20"].iloc[-11])
-
-        # 現在の傾き（今日と5日前の差）
         slope_now = safe_float(ema20_now - ema20_prev)
 
-        # slope の符号変化で反転判定
         is_reversal = (slope_prev < 0 and slope_now > 0)
 
         if not is_reversal:
             log(f"[NO-REV] {symbol}: slope_prev={slope_prev:.4f}, slope_now={slope_now:.4f}")
             return None
 
-        log(f"[REVERSAL] {symbol}: slope_prev={slope_prev:.4f} → slope_now={slope_now:.4f}")
+        # ★ 反転日は「5日前の終値日」
+        reversal_date = df.index[-5].strftime("%Y-%m-%d")
 
-        # --- 以下は元のコードをそのまま維持 ---
+        log(f"[REVERSAL] {symbol}: slope_prev={slope_prev:.4f} → slope_now={slope_now:.4f}, date={reversal_date}")
+
+        # --- 以下は元のコードを維持 ---
         latest = df.iloc[-1]
 
         close_price = safe_float(latest["Close"])
@@ -314,6 +313,8 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             "market_cap": market_cap,
             "slope_ema20": slope_now,
             "volume_ratio": volume_ratio,
+
+            "reversal_date": reversal_date,  # ★ UI 表示用
 
             "short_score": short_score,
             "mid_score": mid_score,
