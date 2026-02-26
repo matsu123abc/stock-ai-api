@@ -191,50 +191,154 @@ def screening_conditions(
 
     return True
 
-def process_symbol(symbol, company_name, market, log, python_condition):
 
+def process_symbol(symbol, company_name, market, log, python_condition):
     try:
-        # 180日分の株価データを取得
-        df = load_price_data(symbol)
-        if df is None or len(df) < 40:
-            log(f"[SKIP] {symbol} データ不足")
+        log(f"[DOWNLOAD-START] {symbol}: downloading 180d/1d data")
+
+        df = yf.download(symbol, period="180d", interval="1d")
+
+        if df is None or df.empty:
+            log(f"[DOWNLOAD-WARN] {symbol}: no daily data returned")
             return None
 
-        # EMA20 を計算
-        df["ema20"] = df["close"].ewm(span=20).mean()
+        log(f"[DOWNLOAD-END] {symbol}: {len(df)} rows downloaded")
 
-        # slope（直近20日の回帰直線の傾き）
-        def calc_slope(series):
-            y = np.array(series)
-            x = np.arange(len(y))
-            slope, _ = np.polyfit(x, y, 1)
-            return slope
+        # --- market cap ---
+        try:
+            ticker = yf.Ticker(symbol)
+            fi = getattr(ticker, "fast_info", None)
+            mc = None
 
-        slope_now = calc_slope(df["ema20"].tail(20))
-        slope_prev = calc_slope(df["ema20"].tail(21).head(20))
+            if fi is not None:
+                mc = fi.get("market_cap", None)
 
-        # ★ 反転判定（最小ロジック）
+            if mc is None:
+                info = ticker.info
+                mc = info.get("marketCap", None)
+
+            market_cap = int(mc / 100000000) if mc else None
+        except:
+            market_cap = None
+
+        # --- indicators ---
+        df["EMA20"] = ema(df["Close"], 20)
+        df["EMA50"] = ema(df["Close"], 50)
+        df["EMA200"] = ema(df["Close"], 200)
+        df["ATR"] = calc_atr(df)
+        df["vol_ma20"] = df["Volume"].rolling(window=20).mean()
+
+        # --- ★ 反転判定（最小ロジック） ---
+        if len(df) < 25:
+            log(f"[SKIP] {symbol}: insufficient data for slope check")
+            return None
+
+        ema20_now = df["EMA20"].iloc[-1]
+        ema20_prev = df["EMA20"].iloc[-5]  # 5日前
+
+        slope_prev = safe_float(df["EMA20"].iloc[-6] - df["EMA20"].iloc[-11])  # 過去の傾き
+        slope_now = safe_float(ema20_now - ema20_prev)  # 現在の傾き
+
         is_reversal = (slope_prev < 0 and slope_now > 0)
 
         if not is_reversal:
-            log(f"[NO-REV] {symbol} 反転なし（slope_prev={slope_prev:.4f}, slope_now={slope_now:.4f}）")
+            log(f"[NO-REV] {symbol}: slope_prev={slope_prev:.4f}, slope_now={slope_now:.4f}")
             return None
 
-        # ★ 反転した銘柄だけ返す
-        log(f"[REVERSAL] {symbol} 反転検出！（slope_prev={slope_prev:.4f} → slope_now={slope_now:.4f}）")
+        log(f"[REVERSAL] {symbol}: slope_prev={slope_prev:.4f} → slope_now={slope_now:.4f}")
+
+        # --- 以下は元のコードをそのまま維持 ---
+        latest = df.iloc[-1]
+
+        close_price = safe_float(latest["Close"])
+        ema20 = safe_float(latest["EMA20"])
+        ema50 = safe_float(latest["EMA50"])
+        ema200 = safe_float(latest["EMA200"])
+        atr = safe_float(latest["ATR"])
+
+        vol_ma20 = safe_float(latest["vol_ma20"])
+        volume = safe_float(latest["Volume"])
+        volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
+
+        recent = df.tail(120)
+        peak_price = safe_float(recent["High"].max())
+        bottom_price = safe_float(recent["Low"].min())
+
+        drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
+        reversal_rate = safe_float((close_price / bottom_price - 1) * 100) if bottom_price else None
+
+        if drop_rate and drop_rate != 0:
+            reversal_strength = safe_float(reversal_rate / abs(drop_rate))
+        else:
+            reversal_strength = None
+
+        def eval_python_condition(condition, ctx):
+            try:
+                return bool(eval(condition, {"__builtins__": None}, ctx))
+            except:
+                return False
+
+        context = {
+            "ema20_vs_ema50": (ema20 - ema50) / ema50 * 100 if ema50 else None,
+            "ema50_vs_ema200": (ema50 - ema200) / ema200 * 100 if ema200 else None,
+            "price_vs_ema20_pct": (close_price / ema20 - 1) * 100 if ema20 else None,
+            "drop_from_high_pct": drop_rate,
+            "rebound_from_low_pct": reversal_rate,
+            "vol_vs_ma20": volume_ratio,
+            "atr_ratio": (atr / close_price * 100) if close_price else None,
+        }
+
+        if python_condition and not eval_python_condition(python_condition, context):
+            log(f"[FILTER] {symbol}: python_condition NG")
+            return None
+
+        short_score = (
+            (reversal_strength or 0) * 0.4 +
+            (volume_ratio or 0) * 0.2 +
+            (slope_now or 0) * 0.2 +
+            (drop_rate or 0) * 0.1 - 
+            (atr or 0) * 0.1
+        )
+
+        mid_score = short_score
+
+        gpt = gpt_score(
+            symbol, company_name, close_price, market_cap,
+            drop_rate, reversal_rate, reversal_strength,
+            ema20, ema50, slope_now,
+            atr, volume, vol_ma20, volume_ratio
+        )
 
         return {
             "symbol": symbol,
             "company_name": company_name,
             "market": market,
-            "slope_prev": slope_prev,
-            "slope_now": slope_now,
-            "is_reversal": True
+            "close": close_price,
+
+            "EMA20": ema20,
+            "EMA50": ema50,
+            "EMA200": ema200,
+            "ATR": atr,
+            "drop_rate": drop_rate,
+            "reversal_rate": reversal_rate,
+            "reversal_strength": reversal_strength,
+            "market_cap": market_cap,
+            "slope_ema20": slope_now,
+            "volume_ratio": volume_ratio,
+
+            "short_score": short_score,
+            "mid_score": mid_score,
+
+            "gpt_score": gpt.get("score"),
+            "gpt_judgement": gpt.get("judgement"),
+            "gpt_comment": gpt.get("comment"),
+            "passed_python_condition": True
         }
 
     except Exception as e:
         log(f"[ERROR] {symbol} processing error: {e}")
         return None
+
 
 # -----------------------------
 # 特徴量生成（train_model.py と同じ）
