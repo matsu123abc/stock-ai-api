@@ -567,9 +567,13 @@ def second_screening(req: func.HttpRequest) -> func.HttpResponse:
         filtered = []
         for r in results:
             if (
-                (r.get("reversal_strength") or 0) > 0.8 and
-                (r.get("slope_ema20") or 0) > 30 and
-                (r.get("volume_ratio") or 0) > 1.0
+                (r.get("drop_from_high_pct") or 0) < -20 and
+                (r.get("rebound_from_low_pct") or 0) > 25 and
+                (r.get("ema20_vs_ema50") or 0) > 5.0 and
+                (r.get("ema50_vs_ema200") or 0) > 10.0 and
+                (r.get("price_vs_ema20_pct") or 0) > 2 and
+                (r.get("vol_vs_ma20") or 0) > 1.0 and
+                (r.get("atr_ratio") or 0) > 1
             ):
                 filtered.append(r)
 
