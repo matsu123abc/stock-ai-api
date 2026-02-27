@@ -244,8 +244,18 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             log(f"[NO-REV] {symbol}: slope_prev={slope_prev:.4f}, slope_now={slope_now:.4f}")
             return None
 
-        # ★ 反転日は「5日前の終値日」
-        reversal_date = df.index[-5].strftime("%Y-%m-%d")
+        # ★ EMA20 の傾きが負→正に転じた日を探す
+        reversal_date = None
+
+        for i in range(11, len(df)):
+            slope_prev_i = safe_float(df["EMA20"].iloc[i-6] - df["EMA20"].iloc[i-11])
+            slope_now_i  = safe_float(df["EMA20"].iloc[i]   - df["EMA20"].iloc[i-5])
+
+            if slope_prev_i < 0 and slope_now_i > 0:
+                reversal_date = df.index[i].strftime("%Y-%m-%d")
+                break
+
+        # 念のため、見つからなかった場合は None のまま
 
         log(f"[REVERSAL] {symbol}: slope_prev={slope_prev:.4f} → slope_now={slope_now:.4f}, date={reversal_date}")
 
