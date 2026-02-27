@@ -357,24 +357,26 @@ def calc_features(df):
     df["ema20_slope"] = df["ema20"] - df["ema20"].shift(5)
     df["atr"] = (df["High"] - df["Low"]).rolling(14).mean()
 
+    def safe_val(x):
+        try:
+            v = float(x)
+            if np.isnan(v):
+                return None
+            return v
+        except:
+            return None
+
     features = {
-        "ret_1d": df["return"].iloc[-1],
-        "ret_3d": df["return"].iloc[-3:-1].mean(),
-        "ret_5d": df["return"].iloc[-5:-1].mean(),
-        "vol_1d": df["vol_change"].iloc[-1],
-        "vol_5d": df["vol_change"].iloc[-5:-1].mean(),
-        "ema20_slope": df["ema20_slope"].iloc[-1],
-        "atr": df["atr"].iloc[-1],
+        "ret_1d": safe_val(df["return"].iloc[-1]),
+        "ret_3d": safe_val(df["return"].iloc[-3:-1].mean()),
+        "ret_5d": safe_val(df["return"].iloc[-5:-1].mean()),
+        "vol_1d": safe_val(df["vol_change"].iloc[-1]),
+        "vol_5d": safe_val(df["vol_change"].iloc[-5:-1].mean()),
+        "ema20_slope": safe_val(df["ema20_slope"].iloc[-1]),
+        "atr": safe_val(df["atr"].iloc[-1]),
     }
+
     return features
-
-def build_features_for_symbol(symbol):
-    df = yf.download(symbol, period="180d", interval="1d")
-    if len(df) < 30:
-        return None
-    feats = calc_features(df)
-    return np.array(list(feats.values())).reshape(1, -1)
-
 
 # =========================
 # メイン関数（screening）
