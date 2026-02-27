@@ -307,6 +307,8 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             "EMA50": ema50,
             "EMA200": ema200,
             "ATR": atr,
+
+            # --- 一次スクリーニング用 ---
             "drop_rate": drop_rate,
             "reversal_rate": reversal_rate,
             "reversal_strength": reversal_strength,
@@ -314,7 +316,16 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             "slope_ema20": slope_now,
             "volume_ratio": volume_ratio,
 
-            "reversal_date": reversal_date,  # ★ UI 表示用
+            # --- 二次スクリーニング用（★追加） ---
+            "drop_from_high_pct": drop_rate,
+            "rebound_from_low_pct": reversal_rate,
+            "ema20_vs_ema50": safe_float(ema20 - ema50),
+            "ema50_vs_ema200": safe_float(ema50 - ema200),
+            "price_vs_ema20_pct": safe_float((close_price / ema20 - 1) * 100) if ema20 else None,
+            "vol_vs_ma20": volume_ratio,
+            "atr_ratio": safe_float(atr / close_price) if close_price else None,
+
+            "reversal_date": reversal_date,
 
             "short_score": short_score,
             "mid_score": mid_score,
@@ -322,6 +333,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             "gpt_score": gpt.get("score"),
             "gpt_judgement": gpt.get("judgement"),
             "gpt_comment": gpt.get("comment"),
+
             "passed_python_condition": True
         }
 
