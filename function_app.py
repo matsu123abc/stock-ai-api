@@ -227,7 +227,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         df["ATR"] = calc_atr(df)
         df["vol_ma20"] = df["Volume"].rolling(window=20).mean()
 
-        # --- ★ slope による反転判定 ---
+        # --- ★ slope による反転判定（最新の反転） ---
         if len(df) < 25:
             log(f"[SKIP] {symbol}: insufficient data for slope check")
             return None
@@ -244,20 +244,20 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             log(f"[NO-REV] {symbol}: slope_prev={slope_prev:.4f}, slope_now={slope_now:.4f}")
             return None
 
-        # ★ EMA20 の傾きが負→正に転じた日を探す
-        reversal_date = None
+        # --- ★ EMA20 の傾きが負→正に転じた「最初」と「最新」の日を探す ---
+        first_reversal_date = None
+        last_reversal_date = None
 
         for i in range(11, len(df)):
             slope_prev_i = safe_float(df["EMA20"].iloc[i-6] - df["EMA20"].iloc[i-11])
             slope_now_i  = safe_float(df["EMA20"].iloc[i]   - df["EMA20"].iloc[i-5])
 
             if slope_prev_i < 0 and slope_now_i > 0:
-                reversal_date = df.index[i].strftime("%Y-%m-%d")
-                break
+                if first_reversal_date is None:
+                    first_reversal_date = df.index[i].strftime("%Y-%m-%d")
+                last_reversal_date = df.index[i].strftime("%Y-%m-%d")
 
-        # 念のため、見つからなかった場合は None のまま
-
-        log(f"[REVERSAL] {symbol}: slope_prev={slope_prev:.4f} → slope_now={slope_now:.4f}, date={reversal_date}")
+        log(f"[REVERSAL] {symbol}: first={first_reversal_date}, last={last_reversal_date}")
 
         # --- 以下は元のコードを維持 ---
         latest = df.iloc[-1]
@@ -283,12 +283,6 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             reversal_strength = safe_float(reversal_rate / abs(drop_rate))
         else:
             reversal_strength = None
-
-        # --- ★ python_condition を完全に無効化 ---
-        # （反転抽出だけを行うため）
-        # if python_condition and not eval_python_condition(python_condition, context):
-        #     log(f"[FILTER] {symbol}: python_condition NG")
-        #     return None
 
         short_score = (
             (reversal_strength or 0) * 0.4 +
@@ -326,7 +320,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             "slope_ema20": slope_now,
             "volume_ratio": volume_ratio,
 
-            # --- 二次スクリーニング用（★追加） ---
+            # --- 二次スクリーニング用 ---
             "drop_from_high_pct": drop_rate,
             "rebound_from_low_pct": reversal_rate,
             "ema20_vs_ema50": safe_float(ema20 - ema50),
@@ -335,7 +329,9 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             "vol_vs_ma20": volume_ratio,
             "atr_ratio": safe_float(atr / close_price) if close_price else None,
 
-            "reversal_date": reversal_date,
+            # --- ★ 反転日（2種類） ---
+            "first_reversal_date": first_reversal_date,
+            "last_reversal_date": last_reversal_date,
 
             "short_score": short_score,
             "mid_score": mid_score,
@@ -350,6 +346,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
     except Exception as e:
         log(f"[ERROR] {symbol} processing error: {e}")
         return None
+
 
 def load_latest_model_from_blob():
     connect_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
