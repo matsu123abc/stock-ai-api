@@ -378,6 +378,14 @@ def calc_features(df):
 
     return features
 
+def calc_features_for_symbol(symbol):
+    df = yf.download(symbol, period="180d", interval="1d")
+    if df is None or len(df) < 30:
+        return None
+
+    return calc_features(df)  # ← safe_val 付きの修正版
+
+
 # =========================
 # メイン関数（screening）
 # =========================
@@ -767,6 +775,11 @@ def third_screening(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         )
 
+
+# =========================
+# 機械学習モデルによる予測
+# =========================
+
 @app.function_name(name="predict_from_symbols")
 @app.route(route="predict_from_symbols", methods=["POST"])
 def predict_from_symbols(req: func.HttpRequest) -> func.HttpResponse:
@@ -782,24 +795,42 @@ def predict_from_symbols(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         model = load_latest_model_from_blob()
-
         results = []
 
         for sym in symbols:
-            feats = build_features_for_symbol(sym)
-            if feats is None:
+            try:
+                # 特徴量辞書（UI 用）
+                feats_dict = calc_features_for_symbol(sym)
+                if feats_dict is None:
+                    results.append({
+                        "symbol": sym,
+                        "prob": None,
+                        "features": None,
+                        "error": "データ不足"
+                    })
+                    continue
+
+                # LightGBM 用（None → 0 に変換）
+                feats_array = np.array([
+                    v if v is not None else 0
+                    for v in feats_dict.values()
+                ]).reshape(1, -1)
+
+                prob = float(model.predict(feats_array)[0] * 100)
+
                 results.append({
                     "symbol": sym,
-                    "prob": None
+                    "prob": round(prob, 2),
+                    "features": feats_dict
                 })
-                continue
 
-            prob = float(model.predict(feats)[0] * 100)
-
-            results.append({
-                "symbol": sym,
-                "prob": round(prob, 2)
-            })
+            except Exception as e:
+                results.append({
+                    "symbol": sym,
+                    "prob": None,
+                    "features": None,
+                    "error": f"内部エラー: {str(e)}"
+                })
 
         return func.HttpResponse(
             json.dumps({"predictions": results}, ensure_ascii=False),
@@ -808,7 +839,8 @@ def predict_from_symbols(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         return func.HttpResponse(
-            json.dumps({"error": str(e)}),
+            json.dumps({"error": f"全体エラー: {str(e)}"}),
             status_code=500,
             mimetype="application/json"
         )
+
