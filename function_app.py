@@ -627,34 +627,17 @@ def explain_symbol(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
 
-        search_endpoint = os.getenv("SEARCH_ENDPOINT")
-        search_key = os.getenv("SEARCH_KEY")
-        index_name = "screening-results"
+        # --- 企業情報を Yahoo Finance から取得 ---
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
 
-        search_client = SearchClient(
-            endpoint=search_endpoint,
-            index_name=index_name,
-            credential=AzureKeyCredential(search_key)
-        )
+        company_name = info.get("shortName") or info.get("longName") or symbol
+        summary = info.get("longBusinessSummary")
 
-        results = search_client.search(
-            search_text=symbol,
-            filter=f"symbol eq '{symbol}'",
-            order_by=["date desc"],
-            top=1
-        )
+        if not summary:
+            summary = "企業情報（longBusinessSummary）が取得できませんでした。"
 
-        docs = list(results)
-        if not docs:
-            return func.HttpResponse(
-                json.dumps({"error": f"{symbol} のデータが見つかりません"}),
-                mimetype="application/json",
-                status_code=404
-            )
-
-        doc = docs[0]
-        r = json.loads(doc["json_text"])
-
+        # --- LLM に企業情報を要約させる ---
         client = AzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
@@ -662,32 +645,22 @@ def explain_symbol(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         prompt = f"""
-あなたは短期トレードの専門家です。
-以下の銘柄データをもとに、投資家向けにわかりやすく説明してください。
+あなたはプロの株式アナリストです。
+以下の企業情報をもとに、この企業が「何をしている会社か」「主力事業」「強み」「特徴」を
+投資家向けに分かりやすく説明してください。
 
-【銘柄】
-コード: {r.get("symbol")}
-企業名: {r.get("company_name")}
-株価: {r.get("close")} 円
-市場: {r.get("market")}
+【企業名】
+{company_name}
 
-【テクニカル指標】
-下落率: {r.get("drop_rate"):.2f}%
-反転率: {r.get("reversal_rate"):.2f}%
-反転強度: {r.get("reversal_strength"):.2f}
-EMA20: {r.get("EMA20")}
-EMA50: {r.get("EMA50")}
-ATR: {r.get("ATR")}
-出来高急増率: {r.get("volume_ratio"):.2f}
-
-【GPT スコア】
-スコア: {r.get("gpt_score")}
-判断: {r.get("gpt_judgement")}
+【企業情報（Yahoo Finance）】
+{summary}
 
 【出力形式】
-- 200〜300文字の解説
-- 今の相場状況で注目すべきポイント
-- リスク要因（100文字以内）
+- 企業の概要（何をしている会社か）
+- 主力事業
+- 強み
+- リスク（分かる範囲で）
+- 投資家向けの総合コメント（200〜300文字）
 """
 
         res = client.chat.completions.create(
@@ -701,8 +674,7 @@ ATR: {r.get("ATR")}
         return func.HttpResponse(
             json.dumps({
                 "symbol": symbol,
-                "company": r.get("company_name"),
-                "date": doc["date"],
+                "company": company_name,
                 "explanation": explanation
             }, ensure_ascii=False),
             mimetype="application/json"
@@ -739,36 +711,37 @@ def third_screening(req: func.HttpRequest) -> func.HttpResponse:
             ticker = yf.Ticker(sym)
             info = ticker.info
 
-            # ★ 企業情報（事業内容・特色）を取得
-            company_summary = info.get("longBusinessSummary", None)
-
-            if not company_summary:
-                company_summary = "企業情報（longBusinessSummary）が取得できませんでした。"
-
-            # ★ LLM に渡すプロンプトを変更
-            prompt = f"""
-あなたはプロの株式アナリストです。
-以下の企業情報をもとに、この企業が「何をしている会社か」「強み」「事業内容」「特徴」を
-投資家向けに分かりやすく説明してください。
-
-銘柄: {sym}
-
-企業情報:
-{company_summary}
-
-出力形式:
-- 企業の概要（何をしている会社か）
-- 主力事業
-- 強み
-- リスク（分かる範囲で）
-- 投資家向けの総合コメント
-"""
+            fundamentals = {
+                "売上高": info.get("totalRevenue"),
+                "営業利益率": info.get("operatingMargins"),
+                "純利益率": info.get("profitMargins"),
+                "EPS": info.get("trailingEps"),
+                "PER": info.get("trailingPE"),
+                "PBR": info.get("priceToBook"),
+                "ROE": info.get("returnOnEquity"),
+                "売上成長率": info.get("revenueGrowth"),
+                "利益成長率": info.get("earningsGrowth"),
+                "フリーCF": info.get("freeCashflow"),
+                "負債総額": info.get("totalDebt"),
+                "現金": info.get("totalCash"),
+            }
 
             client = AzureOpenAI(
                 api_key=os.getenv("AZURE_OPENAI_API_KEY"),
                 api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
                 azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
             )
+
+            prompt = f"""
+あなたはプロの株式アナリストです。
+以下の企業業績データをもとに、企業の強み・弱み・リスク・総合評価を簡潔に説明してください。
+
+銘柄: {sym}
+業績データ:
+{fundamentals}
+
+日本語で、投資家向けに分かりやすく説明してください。
+"""
 
             ai_res = client.chat.completions.create(
                 model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
@@ -780,7 +753,7 @@ def third_screening(req: func.HttpRequest) -> func.HttpResponse:
 
             results.append({
                 "symbol": sym,
-                "company_summary": company_summary,
+                "fundamentals": fundamentals,
                 "analysis": analysis
             })
 
