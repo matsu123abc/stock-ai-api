@@ -739,37 +739,36 @@ def third_screening(req: func.HttpRequest) -> func.HttpResponse:
             ticker = yf.Ticker(sym)
             info = ticker.info
 
-            fundamentals = {
-                "売上高": info.get("totalRevenue"),
-                "営業利益率": info.get("operatingMargins"),
-                "純利益率": info.get("profitMargins"),
-                "EPS": info.get("trailingEps"),
-                "PER": info.get("trailingPE"),
-                "PBR": info.get("priceToBook"),
-                "ROE": info.get("returnOnEquity"),
-                "売上成長率": info.get("revenueGrowth"),
-                "利益成長率": info.get("earningsGrowth"),
-                "フリーCF": info.get("freeCashflow"),
-                "負債総額": info.get("totalDebt"),
-                "現金": info.get("totalCash"),
-            }
+            # ★ 企業情報（事業内容・特色）を取得
+            company_summary = info.get("longBusinessSummary", None)
+
+            if not company_summary:
+                company_summary = "企業情報（longBusinessSummary）が取得できませんでした。"
+
+            # ★ LLM に渡すプロンプトを変更
+            prompt = f"""
+あなたはプロの株式アナリストです。
+以下の企業情報をもとに、この企業が「何をしている会社か」「強み」「事業内容」「特徴」を
+投資家向けに分かりやすく説明してください。
+
+銘柄: {sym}
+
+企業情報:
+{company_summary}
+
+出力形式:
+- 企業の概要（何をしている会社か）
+- 主力事業
+- 強み
+- リスク（分かる範囲で）
+- 投資家向けの総合コメント
+"""
 
             client = AzureOpenAI(
                 api_key=os.getenv("AZURE_OPENAI_API_KEY"),
                 api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
                 azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
             )
-
-            prompt = f"""
-あなたはプロの株式アナリストです。
-以下の企業業績データをもとに、企業の強み・弱み・リスク・総合評価を簡潔に説明してください。
-
-銘柄: {sym}
-業績データ:
-{fundamentals}
-
-日本語で、投資家向けに分かりやすく説明してください。
-"""
 
             ai_res = client.chat.completions.create(
                 model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
@@ -781,7 +780,7 @@ def third_screening(req: func.HttpRequest) -> func.HttpResponse:
 
             results.append({
                 "symbol": sym,
-                "fundamentals": fundamentals,
+                "company_summary": company_summary,
                 "analysis": analysis
             })
 
