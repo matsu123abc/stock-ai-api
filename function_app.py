@@ -183,7 +183,8 @@ def screening_conditions(
     if reversal_rate is None or reversal_rate < 4:
         return False
 
-    if reversal_strength is None or reversal_strength >= 1:
+    #if reversal_strength is None or reversal_strength >= 1:
+    if reversal_strength is None or reversal_strength >= 0.5:
         return False
 
     if ema20 is None or ema50 is None or ema20 <= ema50:
