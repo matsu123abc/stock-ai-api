@@ -275,23 +275,24 @@ def process_symbol(symbol, company_name, market, log, python_condition):
 
 
         lookback = 120
-        window = df.tail(lookback).copy()
+        window = df.tail(lookback)
 
-        # ★ MultiIndex 対策：DatetimeIndex に強制変換
-        window.index = pd.to_datetime(window.index)
+        # 直近ピーク
+        peak_price = safe_float(window["High"].max())
 
-        # 直近のピーク（最後の最大値）
-        peak_ts = window["High"].idxmax()                 # Timestamp
-        peak_index = window.index.get_loc(peak_ts)        # 整数位置に変換
-        peak_price = safe_float(window["High"].iloc[peak_index])
+        # ピークの日付（Timestamp）
+        peak_ts = window["High"].idxmax()
 
-        # ピーク以降の最安値
-        bottom_price = safe_float(window["Low"].iloc[peak_index:].min())
+        # ピーク以降のデータだけ抽出（ここが重要）
+        after_peak = window.loc[peak_ts:]
+
+        # ピーク以降の底値
+        bottom_price = safe_float(after_peak["Low"].min())
 
         # 下落率
         drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
 
-        # 反転率（底から現在値）
+        # 反転率
         close_price = safe_float(df["Close"].iloc[-1])
         reversal_rate = safe_float((close_price / bottom_price - 1) * 100) if bottom_price else None
 
