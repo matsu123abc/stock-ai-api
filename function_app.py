@@ -273,12 +273,34 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         volume = safe_float(latest["Volume"])
         volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
 
-        recent = df.tail(120)
-        peak_price = safe_float(recent["High"].max())
-        bottom_price = safe_float(recent["Low"].min())
+        lookback = 120
+        window = df.tail(lookback)
+
+        # 直近のピーク（最後の最大値）
+        peak_index = window["High"].idxmax()
+        peak_price = safe_float(window.loc[peak_index, "High"])
+
+        # ピーク以降の最安値
+        bottom_price = safe_float(window.loc[peak_index:]["Low"].min())
 
         drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
+
+        # 反転率（底から現在値）
+        close_price = safe_float(df["Close"].iloc[-1])
         reversal_rate = safe_float((close_price / bottom_price - 1) * 100) if bottom_price else None
+
+        # 反転強度
+        if drop_rate and drop_rate != 0:
+            reversal_strength = safe_float(reversal_rate / abs(drop_rate))
+        else:
+            reversal_strength = None
+
+        #recent = df.tail(120)
+        #peak_price = safe_float(recent["High"].max())
+        #bottom_price = safe_float(recent["Low"].min())
+
+        #drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
+        #reversal_rate = safe_float((close_price / bottom_price - 1) * 100) if bottom_price else None
 
         if drop_rate and drop_rate != 0:
             reversal_strength = safe_float(reversal_rate / abs(drop_rate))
