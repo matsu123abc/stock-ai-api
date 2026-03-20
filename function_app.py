@@ -275,16 +275,17 @@ def process_symbol(symbol, company_name, market, log, python_condition):
 
 
         lookback = 120
-        window = df.tail(lookback)
+        window = df.tail(lookback).copy()
+
+        # index を DatetimeIndex に強制変換（MultiIndex 対策）
+        window.index = pd.to_datetime(window.index)
 
         # 直近ピーク
-        peak_price = safe_float(window["High"].max())
-
-        # ピークの日付（Timestamp）
         peak_ts = window["High"].idxmax()
+        peak_price = safe_float(window.loc[peak_ts, "High"])
 
-        # ピーク以降のデータだけ抽出（ここが重要）
-        after_peak = window.loc[peak_ts:]
+        # ★ ピーク以降のデータだけをフィルタ（スライスを使わない）
+        after_peak = window[window.index >= peak_ts]
 
         # ピーク以降の底値
         bottom_price = safe_float(after_peak["Low"].min())
@@ -301,6 +302,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             reversal_strength = safe_float(reversal_rate / abs(drop_rate))
         else:
             reversal_strength = None
+ 
 
 
         #recent = df.tail(120)
