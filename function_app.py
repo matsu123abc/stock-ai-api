@@ -277,11 +277,12 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         window = df.tail(lookback)
 
         # 直近のピーク（最後の最大値）
-        peak_index = window["High"].idxmax()
-        peak_price = safe_float(window.loc[peak_index, "High"])
+        peak_ts = window["High"].idxmax()                 # Timestamp
+        peak_index = window.index.get_loc(peak_ts)        # 整数位置に変換
+        peak_price = safe_float(window["High"].iloc[peak_index])
 
         # ピーク以降の最安値
-        bottom_price = safe_float(window.loc[peak_index:]["Low"].min())
+        bottom_price = safe_float(window["Low"].iloc[peak_index:].min())
 
         drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
 
@@ -294,6 +295,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
             reversal_strength = safe_float(reversal_rate / abs(drop_rate))
         else:
             reversal_strength = None
+
 
         #recent = df.tail(120)
         #peak_price = safe_float(recent["High"].max())
