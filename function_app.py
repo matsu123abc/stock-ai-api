@@ -291,9 +291,9 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         bottom_price = safe_float(recent.loc[bottom_ts, "Low"])
 
         # --- ピークの後に底値が来ているか判定 ---
-        if bottom_ts <= peak_ts:
-            log(f"[SKIP] {symbol}: bottom before peak")
-            return None
+        #if bottom_ts <= peak_ts:
+        #    log(f"[SKIP] {symbol}: bottom before peak")
+        #    return None
 
         # --- 下落率 ---
         drop_rate = safe_float((bottom_price / peak_price - 1) * 100)
