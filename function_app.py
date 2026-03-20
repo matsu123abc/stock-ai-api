@@ -273,8 +273,12 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         volume = safe_float(latest["Volume"])
         volume_ratio = volume / vol_ma20 if vol_ma20 and vol_ma20 > 0 else 0
 
+
         lookback = 120
-        window = df.tail(lookback)
+        window = df.tail(lookback).copy()
+
+        # ★ MultiIndex 対策：DatetimeIndex に強制変換
+        window.index = pd.to_datetime(window.index)
 
         # 直近のピーク（最後の最大値）
         peak_ts = window["High"].idxmax()                 # Timestamp
@@ -284,6 +288,7 @@ def process_symbol(symbol, company_name, market, log, python_condition):
         # ピーク以降の最安値
         bottom_price = safe_float(window["Low"].iloc[peak_index:].min())
 
+        # 下落率
         drop_rate = safe_float((bottom_price / peak_price - 1) * 100) if peak_price else None
 
         # 反転率（底から現在値）
